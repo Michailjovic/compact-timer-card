@@ -13,16 +13,14 @@ class CompactTimerCard extends HTMLElement {
     this._interval = null;
     this._config = {};
     this._hass = null;
-  }
-
-  static getConfigElement() {
-    return document.createElement('compact-timer-card-editor');
+    this._clickBound = this._handleTap.bind(this);
+    this._listenerAttached = false;
   }
 
   static getStubConfig() {
     return {
       entity: 'timer.example',
-      name: 'Timer',
+      name: 'My Timer',
       icon: 'mdi:timer-outline',
       color: '#63b3ed',
       cancel_on_tap: true,
@@ -30,7 +28,7 @@ class CompactTimerCard extends HTMLElement {
   }
 
   setConfig(config) {
-    if (!config.entity) throw new Error('Musíš zadat entity');
+    if (!config.entity) throw new Error('entity is required');
     this._config = {
       name: config.name || '',
       icon: config.icon || 'mdi:timer-outline',
@@ -50,7 +48,7 @@ class CompactTimerCard extends HTMLElement {
 
   _startInterval() {
     if (this._interval) return;
-    this._interval = setInterval(() => this._tick(), 1000);
+    this._interval = setInterval(() => this._render(), 1000);
   }
 
   _stopInterval() {
@@ -62,10 +60,6 @@ class CompactTimerCard extends HTMLElement {
 
   disconnectedCallback() {
     this._stopInterval();
-  }
-
-  _tick() {
-    this._render();
   }
 
   _getTimerData() {
@@ -93,16 +87,13 @@ class CompactTimerCard extends HTMLElement {
 
     const durParts = duration.split(':').map(Number);
     const durationSec = (durParts[0] || 0) * 3600 + (durParts[1] || 0) * 60 + (durParts[2] || 0);
-
     const pct = durationSec > 0 ? Math.min(100, ((durationSec - remainingSec) / durationSec) * 100) : 0;
 
     const h = Math.floor(remainingSec / 3600);
     const m = Math.floor((remainingSec % 3600) / 60);
     const s = remainingSec % 60;
     const pad = (n) => String(n).padStart(2, '0');
-    const timeStr = h > 0
-      ? `${h}:${pad(m)}:${pad(s)}`
-      : `${m}:${pad(s)}`;
+    const timeStr = h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 
     return { state, totalSec: remainingSec, durationSec, pct, timeStr };
   }
@@ -115,6 +106,15 @@ class CompactTimerCard extends HTMLElement {
       if (action.action === 'call-service' || action.action === 'perform-action') {
         const [domain, service] = (action.service || action.perform_action || '').split('.');
         this._hass.callService(domain, service, action.service_data || action.data || {});
+      } else if (action.action === 'navigate') {
+        history.pushState(null, '', action.navigation_path);
+        window.dispatchEvent(new Event('location-changed'));
+      } else if (action.action === 'more-info') {
+        const event = new CustomEvent('hass-more-info', {
+          bubbles: true, composed: true,
+          detail: { entityId: this._config.entity },
+        });
+        this.dispatchEvent(event);
       }
       return;
     }
@@ -129,6 +129,7 @@ class CompactTimerCard extends HTMLElement {
 
     const data = this._getTimerData();
     const color = this._config.color || '#63b3ed';
+
     const colorAlpha = (a) => {
       const hex = color.replace('#', '');
       const r = parseInt(hex.substring(0, 2), 16);
@@ -146,11 +147,11 @@ class CompactTimerCard extends HTMLElement {
       (stateObj && stateObj.attributes.friendly_name) ||
       this._config.entity;
 
+    const showCancel = isActive && this._config.cancel_on_tap && !this._config.tap_action;
+
     this.shadowRoot.innerHTML = `
       <style>
-        :host {
-          display: block;
-        }
+        :host { display: block; }
 
         ha-card {
           background: ${colorAlpha(0.05)};
@@ -162,10 +163,11 @@ class CompactTimerCard extends HTMLElement {
           transition: background 0.15s ease, transform 0.1s ease;
           user-select: none;
           -webkit-tap-highlight-color: transparent;
+          display: block;
         }
 
         ha-card:active {
-          background: ${colorAlpha(0.12)};
+          background: ${colorAlpha(0.14)};
           transform: scale(0.98);
         }
 
@@ -248,7 +250,7 @@ class CompactTimerCard extends HTMLElement {
         }
       </style>
 
-      <ha-card @click="${this._handleTap.bind(this)}">
+      <ha-card>
         <div class="row">
           <div class="left">
             <ha-icon icon="${this._config.icon}"></ha-icon>
@@ -256,7 +258,7 @@ class CompactTimerCard extends HTMLElement {
           </div>
           <div class="right">
             <span class="time">${timeStr}</span>
-            ${isActive && this._config.cancel_on_tap ? '<span class="cancel-badge">Zrušit</span>' : ''}
+            ${showCancel ? '<span class="cancel-badge">Zrušit</span>' : ''}
           </div>
         </div>
         <div class="bar-wrap">
@@ -265,9 +267,10 @@ class CompactTimerCard extends HTMLElement {
       </ha-card>
     `;
 
+    // Attach click listener once after each innerHTML reset
     const card = this.shadowRoot.querySelector('ha-card');
     if (card) {
-      card.addEventListener('click', this._handleTap.bind(this));
+      card.addEventListener('click', this._clickBound);
     }
   }
 
