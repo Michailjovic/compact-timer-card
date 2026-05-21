@@ -14,29 +14,36 @@ class CompactTimerCard extends HTMLElement {
     this._config = {};
     this._hass = null;
     this._initialized = false;
-
-    // Use pointerdown + pointerup instead of click
-    // — more reliable across desktop and mobile in HA
     this._pointerDownTime = 0;
     this._pointerDownX = 0;
     this._pointerDownY = 0;
 
     this.addEventListener('pointerdown', (e) => {
+      if (e.button !== undefined && e.button !== 0) return; // only left click on PC
+      // setPointerCapture ensures pointerup always arrives here,
+      // even if the mouse moves to another element before release
+      try { this.setPointerCapture(e.pointerId); } catch (_) {}
       this._pointerDownTime = Date.now();
       this._pointerDownX = e.clientX;
       this._pointerDownY = e.clientY;
     });
 
     this.addEventListener('pointerup', (e) => {
+      try { this.releasePointerCapture(e.pointerId); } catch (_) {}
       const dt = Date.now() - this._pointerDownTime;
       const dx = Math.abs(e.clientX - this._pointerDownX);
       const dy = Math.abs(e.clientY - this._pointerDownY);
-      // Tap = short press (<400ms) with minimal movement (<8px)
-      if (dt < 400 && dx < 8 && dy < 8) {
+      // Valid tap: pressed < 500ms ago, moved < 10px
+      if (this._pointerDownTime > 0 && dt < 500 && dx < 10 && dy < 10) {
         e.preventDefault();
         e.stopPropagation();
+        this._pointerDownTime = 0;
         this._handleTap();
       }
+    });
+
+    this.addEventListener('pointercancel', () => {
+      this._pointerDownTime = 0;
     });
   }
 
@@ -75,9 +82,7 @@ class CompactTimerCard extends HTMLElement {
   }
 
   connectedCallback() {
-    if (this._hass) {
-      this._startInterval();
-    }
+    if (this._hass) this._startInterval();
   }
 
   disconnectedCallback() {
@@ -189,6 +194,7 @@ class CompactTimerCard extends HTMLElement {
           border-radius: 14px;
           padding: 10px 14px;
           transition: background 0.12s ease, transform 0.1s ease;
+          pointer-events: none;
         }
 
         :host(:active) .card {
@@ -209,7 +215,6 @@ class CompactTimerCard extends HTMLElement {
           gap: 8px;
           flex: 1;
           min-width: 0;
-          pointer-events: none;
         }
 
         ha-icon {
@@ -235,7 +240,6 @@ class CompactTimerCard extends HTMLElement {
           align-items: center;
           gap: 8px;
           flex-shrink: 0;
-          pointer-events: none;
         }
 
         .time {
@@ -265,7 +269,6 @@ class CompactTimerCard extends HTMLElement {
           background: ${ca(0.12)};
           border-radius: 3px;
           overflow: hidden;
-          pointer-events: none;
         }
 
         .bar-fill {
