@@ -3,7 +3,7 @@
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![GitHub release](https://img.shields.io/github/release/michalic/compact-timer-card.svg)](https://github.com/michalic/compact-timer-card/releases)
 
-A sleek, fully customizable Home Assistant timer card with **live per-second countdown** and a **linear progress bar with glow effect**.
+A sleek, fully customizable Home Assistant timer card with **live per-second countdown**, **paused state support**, a **gradient progress bar with glow effect**, and a **built-in visual editor**.
 
 Built as a companion to [Universal Remote Card](https://github.com/nicufodineanu/universal-remote-card) to implement a **deadman switch** for TV auto-shutoff — but works with any HA timer entity.
 
@@ -75,7 +75,7 @@ For the inactivity variant, reset the timer on every remote button press using a
 
 ### Manual
 
-1. Download `dist/compact-timer-card.js` from the latest release
+1. Download `compact-timer-card.js` from the latest release
 2. Copy it to `/config/www/compact-timer-card.js`
 3. Add it as a Lovelace resource:
 
@@ -93,6 +93,11 @@ name: Sleep Timer
 icon: mdi:power-sleep
 color: "#63b3ed"
 cancel_on_tap: true
+cancel_label: Zrušit
+show_duration: false
+show_when_idle: false
+gradient_bar: true
+pulse_icon: true
 ```
 
 ### Options
@@ -103,21 +108,39 @@ cancel_on_tap: true
 | `name` | string | friendly_name | Label displayed on the card |
 | `icon` | string | `mdi:timer-outline` | Any MDI icon |
 | `color` | string | `#63b3ed` | Accent color (hex). Controls bar, icon, and time text. |
-| `cancel_on_tap` | boolean | `true` | Tap the card to cancel the timer |
-| `tap_action` | object | — | Custom tap action (overrides cancel_on_tap) |
+| `cancel_on_tap` | boolean | `true` | Tap the card to cancel the timer (active or paused) |
+| `cancel_label` | string | `Zrušit` | Text shown on the cancel badge |
+| `show_duration` | boolean | `false` | Show total duration next to remaining time (e.g. `1:23 / 30:00`) |
+| `show_when_idle` | boolean | `false` | Keep the card visible when the timer is idle. When `false`, the card hides itself — no conditional card wrapper needed. |
+| `gradient_bar` | boolean | `true` | Use a gradient on the progress bar instead of a flat color |
+| `pulse_icon` | boolean | `true` | Animate the icon with a subtle pulse while the timer is active |
+| `tap_action` | object | — | Custom tap action (overrides `cancel_on_tap`) |
+
+### Timer states
+
+| State | Visual |
+|---|---|
+| **active** | Live countdown, full color, pulse icon, cancel badge |
+| **paused** | Remaining time (dimmed), `⏸ Pauza` badge, dimmed bar |
+| **idle** | Hidden (if `show_when_idle: false`) or shows full duration |
+| **unknown** | `!` error badge — entity not found |
 
 ### tap_action object
 
 | Action | Description |
 |---|---|
-| `call-service` | Call any HA service |
+| `call-service` / `perform-action` | Call any HA service |
 | `navigate` | Navigate to a dashboard path |
 | `more-info` | Open the more-info dialog |
 | `none` | Disable tap |
 
+### Visual editor
+
+The card includes a built-in GUI editor. In the HA dashboard editor, click **+ Add card**, search for **Compact Timer Card**, and configure all options without writing YAML.
+
 ## Full Example — Universal Remote Card + Deadman Switch
 
-This is the intended use case. The compact timer cards appear inside the remote panel only when their timers are active.
+This is the intended use case. The compact timer cards appear inline only when their timers are active.
 
 ```yaml
 type: grid
@@ -253,46 +276,38 @@ cards:
             label:
               - width: 100%
 
-  # Inactivity timer — shown only when active
-  - type: conditional
-    conditions:
-      - condition: state
-        entity: timer.tv_auto_inactivity
-        state: active
-    card:
-      type: custom:compact-timer-card
-      entity: timer.tv_auto_inactivity
-      name: Inactivity – Auto Off
-      icon: mdi:motion-sensor-off
-      color: "#63b3ed"
-      cancel_on_tap: true
+  # Inactivity timer — show_when_idle: false hides it automatically, no conditional wrapper needed
+  - type: custom:compact-timer-card
+    entity: timer.tv_auto_inactivity
+    name: Inactivity – Auto Off
+    icon: mdi:motion-sensor-off
+    color: "#63b3ed"
+    cancel_on_tap: true
+    show_when_idle: false
 
-  # Sleep timer — shown only when active
-  - type: conditional
-    conditions:
-      - condition: state
-        entity: timer.tv_sleep_timer
-        state: active
-    card:
-      type: custom:compact-timer-card
-      entity: timer.tv_sleep_timer
-      name: Sleep Timer
-      icon: mdi:power-sleep
-      color: "#63b3ed"
-      cancel_on_tap: true
+  # Sleep timer — same pattern
+  - type: custom:compact-timer-card
+    entity: timer.tv_sleep_timer
+    name: Sleep Timer
+    icon: mdi:power-sleep
+    color: "#63b3ed"
+    cancel_on_tap: true
+    show_when_idle: false
+    show_duration: true
 ```
 
 ## Design
 
 ```
-[ icon ]  LABEL NAME              12:34  [ Cancel ]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[ icon ]  LABEL NAME              1:23 / 30:00  [ Zrušit ]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-- **Left:** configurable MDI icon + uppercase label
-- **Right:** live per-second countdown + optional cancel badge
-- **Bottom:** 3 px linear progress bar with color glow
+- **Left:** pulsing MDI icon (when active) + uppercase label
+- **Right:** live per-second countdown + optional total duration + state badge
+- **Bottom:** 3 px gradient progress bar with color glow
 - All colors derived from the single `color` option — the card always looks cohesive
+- Adapts to both dark and light HA themes via CSS variables
 
 ## Contributing
 
