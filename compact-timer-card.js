@@ -152,6 +152,11 @@ class CompactTimerCardEditor extends HTMLElement {
           </div>
         </div>
 
+        <div class="check-field" style="margin-top:4px;">
+          <input type="checkbox" id="pulse_bar" ${c.pulse_bar ? 'checked' : ''} />
+          <label for="pulse_bar">Pulse bar on warning / critical</label>
+        </div>
+
         <hr class="divider" />
         <h4>Action</h4>
         <div class="field">
@@ -189,7 +194,7 @@ class CompactTimerCardEditor extends HTMLElement {
     });
 
     // Checkboxes
-    ['show_when_idle', 'show_duration', 'gradient_bar', 'pulse_icon',
+    ['show_when_idle', 'show_duration', 'gradient_bar', 'pulse_icon', 'pulse_bar',
      'warning_enabled', 'critical_enabled'].forEach(id => {
       const el = this.shadowRoot.getElementById(id);
       if (el) el.addEventListener('change', () => this._valueChanged());
@@ -227,6 +232,7 @@ class CompactTimerCardEditor extends HTMLElement {
     newConfig.show_duration = get('show_duration').checked;
     newConfig.gradient_bar = get('gradient_bar').checked;
     newConfig.pulse_icon = get('pulse_icon').checked;
+    newConfig.pulse_bar = get('pulse_bar').checked;
     newConfig.bar_height = parseInt(get('bar_height').value, 10) || 3;
     newConfig.bar_direction = get('bar_direction').value;
     newConfig.bar_position = get('bar_position').value;
@@ -299,6 +305,7 @@ class CompactTimerCard extends HTMLElement {
       show_when_idle: false,
       gradient_bar: true,
       pulse_icon: true,
+      pulse_bar: false,
       bar_height: 3,
       bar_direction: 'ltr',
       bar_position: 'bottom',
@@ -320,6 +327,7 @@ class CompactTimerCard extends HTMLElement {
       show_when_idle: false,
       gradient_bar: true,
       pulse_icon: true,
+      pulse_bar: false,
       bar_height: 3,
       bar_direction: 'ltr',
       bar_position: 'bottom',
@@ -571,6 +579,9 @@ class CompactTimerCard extends HTMLElement {
     const isUnknown = data.state === 'unknown';
     const tapAction = this._getTapAction();
     const doPulse = this._config.pulse_icon !== false && isActive;
+    const zone = this._getThresholdZone(data, entityCfg);
+    const doPulseBar = this._config.pulse_bar === true && isActive
+      && (zone === 'warning' || zone === 'critical');
     const isRTL = this._config.bar_direction === 'rtl';
     const isBarTop = this._config.bar_position === 'top';
     const barHeight = Math.max(1, parseInt(this._config.bar_height, 10) || 3);
@@ -613,7 +624,8 @@ class CompactTimerCard extends HTMLElement {
            style="${barMargin};height:${barHeight}px;border-radius:${barHeight}px;background:${baseCa(0.12)};">
         <div class="bar-fill" data-b="${entityId}"
              style="width:${barWidth}%;background:${barBg};border-radius:${barHeight}px;
-                    box-shadow:0 0 ${barHeight * 2}px ${ca(0.55)};opacity:${barOpacity};"></div>
+                    box-shadow:0 0 ${barHeight * 2}px ${ca(0.55)};opacity:${barOpacity};
+                    ${doPulseBar ? 'animation:pulse-bar 1s ease-in-out infinite;' : ''}"></div>
       </div>`;
 
     const rowHtml = `
@@ -711,6 +723,10 @@ class CompactTimerCard extends HTMLElement {
         @keyframes pulse-icon {
           0%, 100% { opacity: 1; transform: scale(1); }
           50%       { opacity: 0.45; transform: scale(0.85); }
+        }
+        @keyframes pulse-bar {
+          0%, 100% { opacity: 1; }
+          50%       { opacity: 0.25; }
         }
         .label {
           font-size: 10px;
