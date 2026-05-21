@@ -15,8 +15,29 @@ class CompactTimerCard extends HTMLElement {
     this._hass = null;
     this._initialized = false;
 
-    // Attach click listener ONCE on the outer element — survives all re-renders
-    this.addEventListener('click', () => this._handleTap());
+    // Use pointerdown + pointerup instead of click
+    // — more reliable across desktop and mobile in HA
+    this._pointerDownTime = 0;
+    this._pointerDownX = 0;
+    this._pointerDownY = 0;
+
+    this.addEventListener('pointerdown', (e) => {
+      this._pointerDownTime = Date.now();
+      this._pointerDownX = e.clientX;
+      this._pointerDownY = e.clientY;
+    });
+
+    this.addEventListener('pointerup', (e) => {
+      const dt = Date.now() - this._pointerDownTime;
+      const dx = Math.abs(e.clientX - this._pointerDownX);
+      const dy = Math.abs(e.clientY - this._pointerDownY);
+      // Tap = short press (<400ms) with minimal movement (<8px)
+      if (dt < 400 && dx < 8 && dy < 8) {
+        e.preventDefault();
+        e.stopPropagation();
+        this._handleTap();
+      }
+    });
   }
 
   static getStubConfig() {
@@ -54,8 +75,6 @@ class CompactTimerCard extends HTMLElement {
   }
 
   connectedCallback() {
-    // Re-attach interval when card is re-inserted into DOM
-    // (e.g. conditional card toggling visibility)
     if (this._hass) {
       this._startInterval();
     }
@@ -143,7 +162,6 @@ class CompactTimerCard extends HTMLElement {
     }
   }
 
-  // Build full DOM once — only text/bar updated on tick
   _build() {
     const color = this._config.color || '#63b3ed';
     const ca = (a) => this._colorAlpha(color, a);
@@ -162,6 +180,7 @@ class CompactTimerCard extends HTMLElement {
           cursor: pointer;
           -webkit-tap-highlight-color: transparent;
           user-select: none;
+          touch-action: manipulation;
         }
 
         .card {
@@ -169,7 +188,7 @@ class CompactTimerCard extends HTMLElement {
           border: 1px solid ${ca(0.18)};
           border-radius: 14px;
           padding: 10px 14px;
-          transition: background 0.15s ease, transform 0.1s ease;
+          transition: background 0.12s ease, transform 0.1s ease;
         }
 
         :host(:active) .card {
@@ -190,13 +209,13 @@ class CompactTimerCard extends HTMLElement {
           gap: 8px;
           flex: 1;
           min-width: 0;
+          pointer-events: none;
         }
 
         ha-icon {
           color: ${ca(0.65)};
           --mdc-icon-size: 15px;
           flex-shrink: 0;
-          pointer-events: none;
         }
 
         .label {
@@ -209,7 +228,6 @@ class CompactTimerCard extends HTMLElement {
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
-          pointer-events: none;
         }
 
         .right {
@@ -281,12 +299,10 @@ class CompactTimerCard extends HTMLElement {
     this._tick();
   }
 
-  // Only update time and bar — DOM untouched
   _tick() {
     if (!this._initialized) return;
     const data = this._getTimerData();
     if (!data) return;
-
     const timeEl = this.shadowRoot.getElementById('time-display');
     const barEl = this.shadowRoot.getElementById('bar-fill');
     if (timeEl) timeEl.textContent = data.timeStr;
