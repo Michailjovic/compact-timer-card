@@ -68,6 +68,17 @@ class CompactTimerCardEditor extends HTMLElement {
           cursor: pointer;
           box-sizing: border-box;
         }
+        .field input[type="number"] {
+          width: 100%;
+          padding: 8px 10px;
+          border-radius: 8px;
+          border: 1px solid var(--divider-color, rgba(255,255,255,0.12));
+          background: var(--secondary-background-color, rgba(255,255,255,0.05));
+          color: var(--primary-text-color);
+          font-size: 14px;
+          box-sizing: border-box;
+          outline: none;
+        }
         .check-field {
           display: flex;
           align-items: center;
@@ -94,61 +105,65 @@ class CompactTimerCardEditor extends HTMLElement {
       </style>
       <div class="form">
 
-        <h4>Základní</h4>
+        <h4>Basic</h4>
 
         <div class="field">
-          <label>Entity (povinné)</label>
+          <label>Entity (required)</label>
           <input type="text" id="entity" value="${c.entity || ''}" placeholder="timer.example" />
         </div>
         <div class="field">
-          <label>Název (prázdné = z entity)</label>
+          <label>Name (leave empty to use friendly name)</label>
           <input type="text" id="name" value="${c.name || ''}" placeholder="My Timer" />
         </div>
         <div class="field">
-          <label>Ikona</label>
+          <label>Icon</label>
           <input type="text" id="icon" value="${c.icon || ''}" placeholder="mdi:timer-outline" />
         </div>
         <div class="field">
-          <label>Barva akcentu</label>
+          <label>Accent color</label>
           <input type="color" id="color" value="${c.color || '#63b3ed'}" />
         </div>
 
         <hr class="divider" />
-        <h4>Zobrazení</h4>
+        <h4>Display</h4>
 
         <div class="check-field">
           <input type="checkbox" id="show_when_idle" ${c.show_when_idle ? 'checked' : ''} />
-          <label for="show_when_idle">Zobrazit i při nečinném timeru</label>
+          <label for="show_when_idle">Show when timer is idle</label>
         </div>
         <div class="check-field">
           <input type="checkbox" id="show_duration" ${c.show_duration ? 'checked' : ''} />
-          <label for="show_duration">Zobrazit celkovou dobu (1:23 / 30:00)</label>
+          <label for="show_duration">Show total duration (1:23 / 30:00)</label>
         </div>
         <div class="check-field">
           <input type="checkbox" id="gradient_bar" ${c.gradient_bar !== false ? 'checked' : ''} />
-          <label for="gradient_bar">Gradientní progress bar</label>
+          <label for="gradient_bar">Gradient progress bar</label>
         </div>
         <div class="check-field">
           <input type="checkbox" id="pulse_icon" ${c.pulse_icon !== false ? 'checked' : ''} />
-          <label for="pulse_icon">Pulzující ikona při aktivním timeru</label>
+          <label for="pulse_icon">Pulse icon when active</label>
+        </div>
+        <div class="field">
+          <label>Progress bar height (px)</label>
+          <input type="number" id="bar_height" value="${c.bar_height ?? 3}" min="1" max="20" step="1" />
         </div>
 
         <hr class="divider" />
-        <h4>Akce</h4>
+        <h4>Action</h4>
 
         <div class="check-field">
           <input type="checkbox" id="cancel_on_tap" ${c.cancel_on_tap !== false ? 'checked' : ''} />
-          <label for="cancel_on_tap">Klepnutím zrušit timer</label>
+          <label for="cancel_on_tap">Tap to cancel the timer</label>
         </div>
         <div class="field">
-          <label>Text tlačítka zrušení</label>
-          <input type="text" id="cancel_label" value="${c.cancel_label || ''}" placeholder="Zrušit" />
+          <label>Cancel button label</label>
+          <input type="text" id="cancel_label" value="${c.cancel_label || ''}" placeholder="Cancel" />
         </div>
 
       </div>
     `;
 
-    const textFields = ['entity', 'name', 'icon', 'color', 'cancel_label'];
+    const textFields = ['entity', 'name', 'icon', 'color', 'cancel_label', 'bar_height'];
     textFields.forEach(id => {
       const el = this.shadowRoot.getElementById(id);
       if (el) el.addEventListener('change', () => this._valueChanged());
@@ -181,6 +196,7 @@ class CompactTimerCardEditor extends HTMLElement {
     newConfig.gradient_bar = get('gradient_bar').checked;
     newConfig.pulse_icon = get('pulse_icon').checked;
     newConfig.cancel_on_tap = get('cancel_on_tap').checked;
+    newConfig.bar_height = parseInt(get('bar_height').value, 10) || 3;
 
     const cancelLabel = get('cancel_label').value;
     if (cancelLabel) newConfig.cancel_label = cancelLabel; else delete newConfig.cancel_label;
@@ -227,11 +243,12 @@ class CompactTimerCard extends HTMLElement {
       icon: 'mdi:timer-outline',
       color: '#63b3ed',
       cancel_on_tap: true,
-      cancel_label: 'Zrušit',
+      cancel_label: 'Cancel',
       show_duration: false,
       show_when_idle: false,
       gradient_bar: true,
       pulse_icon: true,
+      bar_height: 3,
     };
   }
 
@@ -242,11 +259,12 @@ class CompactTimerCard extends HTMLElement {
       icon: 'mdi:timer-outline',
       color: '#63b3ed',
       cancel_on_tap: true,
-      cancel_label: 'Zrušit',
+      cancel_label: 'Cancel',
       show_duration: false,
       show_when_idle: false,
       gradient_bar: true,
       pulse_icon: true,
+      bar_height: 3,
       tap_action: null,
       ...config,
     };
@@ -392,12 +410,15 @@ class CompactTimerCard extends HTMLElement {
     const ca = (a) => this._colorAlpha(color, a);
     const data = this._getTimerData();
 
-    // Self-hide when idle and show_when_idle is false
+    // Self-hide when idle and show_when_idle is false.
+    // Use shadow DOM CSS — this.style.display='none' can be overridden by HA's hui-card wrapper.
     if (!this._config.show_when_idle && data && data.isIdle) {
-      this.style.display = 'none';
-    } else {
-      this.style.display = '';
+      this.shadowRoot.innerHTML = '<style>:host { display: none !important; }</style>';
+      this._initialized = true;
+      this._stopInterval();
+      return;
     }
+    this.style.display = '';
 
     const stateObj = this._hass && this._hass.states[this._config.entity];
     const name = this._config.name ||
@@ -412,17 +433,18 @@ class CompactTimerCard extends HTMLElement {
     // Status badge HTML
     let statusBadge = '';
     if (isPaused) {
-      statusBadge = `<span class="status-badge paused">⏸ Pauza</span>`;
+      statusBadge = `<span class="status-badge paused">⏸ Paused</span>`;
     } else if (isUnknown) {
       statusBadge = `<span class="status-badge error">!</span>`;
     } else if (showCancel && isActive) {
-      statusBadge = `<span class="cancel-badge">${this._config.cancel_label || 'Zrušit'}</span>`;
+      statusBadge = `<span class="cancel-badge">${this._config.cancel_label || 'Cancel'}</span>`;
     }
 
     // Total duration text
     const totalStr = data && data.totalStr ? `<span class="time-total" id="time-total">/ ${data.totalStr}</span>` : '';
 
-    // Progress bar background
+    // Progress bar
+    const barHeight = Math.max(1, parseInt(this._config.bar_height, 10) || 3);
     const gradientBar = this._config.gradient_bar !== false;
     const barBg = gradientBar
       ? `linear-gradient(90deg, ${ca(0.55)} 0%, ${color} 100%)`
@@ -562,9 +584,9 @@ class CompactTimerCard extends HTMLElement {
         .bar-wrap {
           margin-top: 8px;
           width: 100%;
-          height: 3px;
+          height: ${barHeight}px;
           background: ${ca(0.12)};
-          border-radius: 3px;
+          border-radius: ${barHeight}px;
           overflow: hidden;
         }
 
@@ -572,8 +594,8 @@ class CompactTimerCard extends HTMLElement {
           height: 100%;
           width: 0%;
           background: ${barBg};
-          border-radius: 3px;
-          box-shadow: 0 0 6px ${ca(0.55)};
+          border-radius: ${barHeight}px;
+          box-shadow: 0 0 ${barHeight * 2}px ${ca(0.55)};
           transition: width 0.9s linear;
           opacity: ${barOpacity};
         }
@@ -606,8 +628,7 @@ class CompactTimerCard extends HTMLElement {
 
     this._initialized = true;
   }
-
-  // ─── Tick (every second, only updates changing values) ─────────────────────
+  // Tick — updates only the changing values (runs every second)
 
   _tick() {
     if (!this._initialized) return;
