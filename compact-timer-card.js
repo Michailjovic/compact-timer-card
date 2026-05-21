@@ -13,8 +13,7 @@ class CompactTimerCard extends HTMLElement {
     this._interval = null;
     this._config = {};
     this._hass = null;
-    this._clickBound = this._handleTap.bind(this);
-    this._listenerAttached = false;
+    this._initialized = false;
   }
 
   static getStubConfig() {
@@ -37,18 +36,31 @@ class CompactTimerCard extends HTMLElement {
       tap_action: config.tap_action || null,
       ...config,
     };
-    this._render();
+    this._initialized = false;
+    this._build();
   }
 
   set hass(hass) {
     this._hass = hass;
-    this._render();
+    if (!this._initialized) {
+      this._build();
+    } else {
+      this._tick();
+    }
     this._startInterval();
+  }
+
+  _colorAlpha(color, a) {
+    const hex = color.replace('#', '');
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+    return `rgba(${r},${g},${b},${a})`;
   }
 
   _startInterval() {
     if (this._interval) return;
-    this._interval = setInterval(() => this._render(), 1000);
+    this._interval = setInterval(() => this._tick(), 1000);
   }
 
   _stopInterval() {
@@ -72,7 +84,7 @@ class CompactTimerCard extends HTMLElement {
 
     if (state !== 'active') {
       this._stopInterval();
-      return { state, totalSec: 0, durationSec: 0, pct: 0, timeStr: '0:00' };
+      return { state, pct: 0, timeStr: '0:00', isActive: false };
     }
 
     this._startInterval();
@@ -95,7 +107,7 @@ class CompactTimerCard extends HTMLElement {
     const pad = (n) => String(n).padStart(2, '0');
     const timeStr = h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 
-    return { state, totalSec: remainingSec, durationSec, pct, timeStr };
+    return { state, pct, timeStr, isActive: true };
   }
 
   _handleTap() {
@@ -110,11 +122,10 @@ class CompactTimerCard extends HTMLElement {
         history.pushState(null, '', action.navigation_path);
         window.dispatchEvent(new Event('location-changed'));
       } else if (action.action === 'more-info') {
-        const event = new CustomEvent('hass-more-info', {
+        this.dispatchEvent(new CustomEvent('hass-more-info', {
           bubbles: true, composed: true,
           detail: { entityId: this._config.entity },
-        });
-        this.dispatchEvent(event);
+        }));
       }
       return;
     }
@@ -124,38 +135,25 @@ class CompactTimerCard extends HTMLElement {
     }
   }
 
-  _render() {
-    if (!this._config.entity) return;
-
-    const data = this._getTimerData();
+  // Build full DOM once — never touched again
+  _build() {
     const color = this._config.color || '#63b3ed';
-
-    const colorAlpha = (a) => {
-      const hex = color.replace('#', '');
-      const r = parseInt(hex.substring(0, 2), 16);
-      const g = parseInt(hex.substring(2, 4), 16);
-      const b = parseInt(hex.substring(4, 6), 16);
-      return `rgba(${r},${g},${b},${a})`;
-    };
-
-    const isActive = data && data.state === 'active';
-    const pct = data ? data.pct : 0;
-    const timeStr = data ? data.timeStr : '0:00';
+    const ca = (a) => this._colorAlpha(color, a);
 
     const stateObj = this._hass && this._hass.states[this._config.entity];
     const name = this._config.name ||
       (stateObj && stateObj.attributes.friendly_name) ||
       this._config.entity;
 
-    const showCancel = isActive && this._config.cancel_on_tap && !this._config.tap_action;
+    const showCancel = this._config.cancel_on_tap && !this._config.tap_action;
 
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; }
 
         ha-card {
-          background: ${colorAlpha(0.05)};
-          border: 1px solid ${colorAlpha(0.18)};
+          background: ${ca(0.05)};
+          border: 1px solid ${ca(0.18)};
           border-radius: 14px;
           box-shadow: none;
           padding: 10px 14px;
@@ -167,7 +165,7 @@ class CompactTimerCard extends HTMLElement {
         }
 
         ha-card:active {
-          background: ${colorAlpha(0.14)};
+          background: ${ca(0.14)};
           transform: scale(0.98);
         }
 
@@ -187,7 +185,7 @@ class CompactTimerCard extends HTMLElement {
         }
 
         ha-icon {
-          color: ${colorAlpha(0.65)};
+          color: ${ca(0.65)};
           --mdc-icon-size: 15px;
           flex-shrink: 0;
         }
@@ -235,43 +233,57 @@ class CompactTimerCard extends HTMLElement {
           margin-top: 8px;
           width: 100%;
           height: 3px;
-          background: ${colorAlpha(0.12)};
+          background: ${ca(0.12)};
           border-radius: 3px;
           overflow: hidden;
         }
 
         .bar-fill {
           height: 100%;
-          width: ${pct}%;
+          width: 0%;
           background: ${color};
           border-radius: 3px;
-          box-shadow: 0 0 6px ${colorAlpha(0.55)};
+          box-shadow: 0 0 6px ${ca(0.55)};
           transition: width 0.9s linear;
         }
       </style>
 
-      <ha-card>
+      <ha-card id="card">
         <div class="row">
           <div class="left">
             <ha-icon icon="${this._config.icon}"></ha-icon>
             <span class="label">${name}</span>
           </div>
           <div class="right">
-            <span class="time">${timeStr}</span>
+            <span class="time" id="time-display">0:00</span>
             ${showCancel ? '<span class="cancel-badge">Zrušit</span>' : ''}
           </div>
         </div>
         <div class="bar-wrap">
-          <div class="bar-fill"></div>
+          <div class="bar-fill" id="bar-fill"></div>
         </div>
       </ha-card>
     `;
 
-    // Attach click listener once after each innerHTML reset
-    const card = this.shadowRoot.querySelector('ha-card');
-    if (card) {
-      card.addEventListener('click', this._clickBound);
-    }
+    // Attach click listener ONCE — persists for the lifetime of the card
+    this.shadowRoot.getElementById('card').addEventListener('click', () => this._handleTap());
+
+    this._initialized = true;
+    this._tick();
+  }
+
+  // Only update time text and bar width — DOM untouched
+  _tick() {
+    if (!this._initialized) return;
+
+    const data = this._getTimerData();
+    if (!data) return;
+
+    const timeEl = this.shadowRoot.getElementById('time-display');
+    const barEl = this.shadowRoot.getElementById('bar-fill');
+
+    if (timeEl) timeEl.textContent = data.timeStr;
+    if (barEl) barEl.style.width = `${data.pct}%`;
   }
 
   getCardSize() {
