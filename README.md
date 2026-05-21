@@ -3,11 +3,11 @@
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![GitHub release](https://img.shields.io/github/release/michalic/compact-timer-card.svg)](https://github.com/michalic/compact-timer-card/releases)
 
-A sleek, fully customizable Home Assistant timer card with **live per-second countdown**, **paused state support**, a **gradient progress bar with glow effect**, and a **built-in visual editor**.
+A sleek, fully customizable Home Assistant timer card with **live per-second countdown**, **warning/critical color zones**, **paused state support**, a **gradient progress bar with glow effect**, and a **built-in visual editor**.
 
 Built as a companion to [Universal Remote Card](https://github.com/nicufodineanu/universal-remote-card) to implement a **deadman switch** for TV auto-shutoff — but works with any HA timer entity.
 
-![Preview](https://raw.githubusercontent.com/michalic/compact-timer-card/main/assets/preview.png)
+![Hero](https://raw.githubusercontent.com/michalic/compact-timer-card/main/assets/hero.png)
 
 ## The Problem This Solves
 
@@ -15,18 +15,41 @@ Universal Remote Card is great for controlling media devices, but it has no nati
 
 > You set a sleep timer. If you fall asleep and stop interacting with the remote, the TV turns off automatically. The timer is visible directly in the remote panel, and you can cancel it with a single tap if you're still watching.
 
+## Features
+
+- Live per-second countdown computed from `finishes_at`
+- Warning and critical color zones with configurable thresholds
+- Optional bar pulse animation when entering warning/critical zone
+- Paused state with dimmed bar and badge
+- Tap and hold actions (cancel, pause/resume, or custom)
+- Progress bar: gradient, direction (ltr/rtl), position (top/bottom), height
+- Pulsing icon animation while active
+- `show_when_idle: false` hides the card automatically — no conditional card wrapper needed
+- Stacked mode: display multiple timers in a single card via `entities:`
+- Built-in visual GUI editor
+
+## Timer States
+
+![States](https://raw.githubusercontent.com/michalic/compact-timer-card/main/assets/preview.png)
+
+| State | Visual |
+|---|---|
+| **active** | Live countdown, full color, pulsing icon, action badge |
+| **paused** | Remaining time (dimmed), ⏸ Paused badge, dimmed bar |
+| **idle** | Hidden (if `show_when_idle: false`) or shows full duration |
+| **unknown** | `!` error badge — entity not found |
+
+### Warning and Critical zones
+
+The bar and icon color change automatically as the timer runs down.
+
+![Warning state](https://raw.githubusercontent.com/michalic/compact-timer-card/main/assets/warning.png)
+
+![Critical state](https://raw.githubusercontent.com/michalic/compact-timer-card/main/assets/critical.png)
+
 ## Required Helper — HA Timer Entity
 
-This card works with Home Assistant's built-in `timer` domain. You need to create a timer helper for each timer you want to display.
-
-### Creating the timer helper
-
-**Via UI:**
-1. Go to **Settings → Devices & Services → Helpers**
-2. Click **+ Create helper**
-3. Choose **Timer**
-4. Set a name (e.g. `TV Sleep Timer`) and optionally a default duration
-5. Note the generated entity ID (e.g. `timer.tv_sleep_timer`)
+This card works with Home Assistant's built-in `timer` domain.
 
 **Via YAML** (in `configuration.yaml`):
 
@@ -34,7 +57,7 @@ This card works with Home Assistant's built-in `timer` domain. You need to creat
 timer:
   tv_sleep_timer:
     name: TV Sleep Timer
-    duration: "01:00:00"
+    duration: "00:30:00"
     restore: true
   tv_auto_inactivity:
     name: TV Auto Inactivity
@@ -42,11 +65,11 @@ timer:
     restore: true
 ```
 
-> **Note:** Setting `restore: true` preserves the timer state across HA restarts.
+> **Note:** `restore: true` preserves timer state across HA restarts.
 
-### Automations to make the deadman switch work
+**Via UI:** Settings → Devices & Services → Helpers → + Create helper → Timer
 
-The timer itself doesn't do anything — you need automations to act on it. Here's a minimal example that turns off the TV when the sleep timer finishes:
+### Automations for the deadman switch
 
 ```yaml
 alias: TV Sleep Timer – Turn Off
@@ -61,7 +84,7 @@ actions:
       entity_id: media_player.your_tv
 ```
 
-For the inactivity variant, reset the timer on every remote button press using a script or automation that calls `timer.start` on each interaction.
+For the inactivity variant, call `timer.start` on every remote button press to reset the countdown.
 
 ## Installation
 
@@ -69,15 +92,15 @@ For the inactivity variant, reset the timer on every remote button press using a
 
 1. Open **HACS → Frontend**
 2. Click the three-dot menu **⋮ → Custom repositories**
-3. Add the URL of this repository and select category **Lovelace**
+3. Add the URL of this repository, category **Lovelace**
 4. Find **Compact Timer Card** and click **Install**
-5. Clear browser cache or reload the page
+5. Hard-reload the browser (Ctrl+Shift+R)
 
 ### Manual
 
 1. Download `compact-timer-card.js` from the latest release
 2. Copy it to `/config/www/compact-timer-card.js`
-3. Add it as a Lovelace resource:
+3. Add as a Lovelace resource:
 
 ```yaml
 - url: /local/compact-timer-card.js
@@ -92,12 +115,21 @@ entity: timer.tv_sleep_timer
 name: Sleep Timer
 icon: mdi:power-sleep
 color: "#63b3ed"
-cancel_on_tap: true
-cancel_label: Zrušit
-show_duration: false
+tap: cancel
+hold: none
+cancel_label: Cancel
+show_duration: true
 show_when_idle: false
 gradient_bar: true
 pulse_icon: true
+pulse_bar: false
+bar_height: 3
+bar_direction: ltr
+bar_position: bottom
+warning_color: "#f6ad55"
+warning_threshold: 30
+critical_color: "#fc8181"
+critical_threshold: 10
 ```
 
 ### Options
@@ -105,25 +137,26 @@ pulse_icon: true
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `entity` | string | **required** | Timer entity ID |
+| `entities` | list | — | Multiple timers in one card (see Stacked mode below) |
 | `name` | string | friendly_name | Label displayed on the card |
 | `icon` | string | `mdi:timer-outline` | Any MDI icon |
-| `color` | string | `#63b3ed` | Accent color (hex). Controls bar, icon, and time text. |
-| `cancel_on_tap` | boolean | `true` | Tap the card to cancel the timer (active or paused) |
-| `cancel_label` | string | `Zrušit` | Text shown on the cancel badge |
+| `color` | string | `#63b3ed` | Base accent color (hex) — controls bar, icon, and time text |
+| `tap` | string | `cancel` | Tap action: `cancel`, `toggle_pause`, `none` |
+| `hold` | string | `none` | Hold action (~500 ms): `none`, `cancel`, `toggle_pause` |
+| `cancel_label` | string | `Cancel` | Text shown on the cancel badge |
 | `show_duration` | boolean | `false` | Show total duration next to remaining time (e.g. `1:23 / 30:00`) |
-| `show_when_idle` | boolean | `false` | Keep the card visible when the timer is idle. When `false`, the card hides itself — no conditional card wrapper needed. |
-| `gradient_bar` | boolean | `true` | Use a gradient on the progress bar instead of a flat color |
-| `pulse_icon` | boolean | `true` | Animate the icon with a subtle pulse while the timer is active |
-| `tap_action` | object | — | Custom tap action (overrides `cancel_on_tap`) |
-
-### Timer states
-
-| State | Visual |
-|---|---|
-| **active** | Live countdown, full color, pulse icon, cancel badge |
-| **paused** | Remaining time (dimmed), `⏸ Pauza` badge, dimmed bar |
-| **idle** | Hidden (if `show_when_idle: false`) or shows full duration |
-| **unknown** | `!` error badge — entity not found |
+| `show_when_idle` | boolean | `false` | Keep card visible when timer is idle |
+| `gradient_bar` | boolean | `true` | Gradient on the progress bar instead of flat color |
+| `pulse_icon` | boolean | `true` | Pulse icon animation while active |
+| `pulse_bar` | boolean | `false` | Pulse bar animation when in warning or critical zone |
+| `bar_height` | number | `3` | Progress bar height in pixels |
+| `bar_direction` | string | `ltr` | `ltr` = fills left→right (elapsed); `rtl` = empties right→left (remaining) |
+| `bar_position` | string | `bottom` | `bottom` or `top` |
+| `warning_color` | string | — | Color when warning threshold is reached (e.g. `#f6ad55`) |
+| `warning_threshold` | number | `20` | % of time remaining that triggers warning color |
+| `critical_color` | string | — | Color when critical threshold is reached (e.g. `#fc8181`) |
+| `critical_threshold` | number | `5` | % of time remaining that triggers critical color |
+| `tap_action` | object | — | Advanced tap action object (overrides `tap`) |
 
 ### tap_action object
 
@@ -136,11 +169,37 @@ pulse_icon: true
 
 ### Visual editor
 
-The card includes a built-in GUI editor. In the HA dashboard editor, click **+ Add card**, search for **Compact Timer Card**, and configure all options without writing YAML.
+The card includes a built-in GUI editor. In the HA dashboard editor click **+ Add card**, search for **Compact Timer Card**, and configure all options without writing YAML.
+
+### Stacked mode
+
+Display multiple timers in a single card. Each timer can override the global color and threshold settings:
+
+```yaml
+type: custom:compact-timer-card
+color: "#63b3ed"
+warning_color: "#f6ad55"
+warning_threshold: 30
+critical_color: "#fc8181"
+critical_threshold: 10
+show_when_idle: false
+show_duration: true
+tap: cancel
+entities:
+  - entity: timer.tv_auto_inactivity
+    name: NEAKTIVITA – AUTO OFF
+    icon: mdi:motion-sensor-off
+  - entity: timer.tv_sleep_timer
+    name: VYPNUTÍ TV
+    icon: mdi:power-sleep
+    cancel_label: End
+```
 
 ## Full Example — Universal Remote Card + Deadman Switch
 
-This is the intended use case. The compact timer cards appear inline only when their timers are active.
+This is the intended use case. The compact timer cards appear inline within the remote panel only when their timers are active.
+
+![Full setup](https://raw.githubusercontent.com/michalic/compact-timer-card/main/assets/hero.png)
 
 ```yaml
 type: grid
@@ -152,7 +211,7 @@ cards:
   - type: custom:universal-remote-card
     # ... your remote config here
 
-  # Sleep timer buttons — tap to set duration
+  # Sleep timer duration buttons — tap to set and start
   - type: horizontal-stack
     cards:
       - type: custom:button-card
@@ -276,37 +335,40 @@ cards:
             label:
               - width: 100%
 
-  # Inactivity timer — show_when_idle: false hides it automatically, no conditional wrapper needed
+  # Both timers in one stacked card
+  # show_when_idle: false — the card hides itself when both timers are idle
   - type: custom:compact-timer-card
-    entity: timer.tv_auto_inactivity
-    name: Inactivity – Auto Off
-    icon: mdi:motion-sensor-off
     color: "#63b3ed"
-    cancel_on_tap: true
-    show_when_idle: false
-
-  # Sleep timer — same pattern
-  - type: custom:compact-timer-card
-    entity: timer.tv_sleep_timer
-    name: Sleep Timer
-    icon: mdi:power-sleep
-    color: "#63b3ed"
-    cancel_on_tap: true
+    warning_color: "#f6ad55"
+    warning_threshold: 30
+    critical_color: "#fc8181"
+    critical_threshold: 10
+    pulse_bar: true
     show_when_idle: false
     show_duration: true
+    tap: cancel
+    entities:
+      - entity: timer.tv_auto_inactivity
+        name: NEAKTIVITA – AUTO OFF
+        icon: mdi:motion-sensor-off
+      - entity: timer.tv_sleep_timer
+        name: VYPNUTÍ TV
+        icon: mdi:power-sleep
+        cancel_label: End
 ```
 
 ## Design
 
 ```
-[ icon ]  LABEL NAME              1:23 / 30:00  [ Zrušit ]
+[ icon ]  LABEL NAME              1:23 / 30:00  [ Cancel ]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
 - **Left:** pulsing MDI icon (when active) + uppercase label
 - **Right:** live per-second countdown + optional total duration + state badge
-- **Bottom:** 3 px gradient progress bar with color glow
-- All colors derived from the single `color` option — the card always looks cohesive
+- **Bottom:** gradient progress bar with color glow
+- Colors switch automatically from base → warning → critical as time runs out
+- All colors derived from a single hex value — the card always looks cohesive
 - Adapts to both dark and light HA themes via CSS variables
 
 ## Contributing
