@@ -1,13 +1,13 @@
 # Compact Timer Card
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![GitHub release](https://img.shields.io/github/release/michalic/compact-timer-card.svg)](https://github.com/michalic/compact-timer-card/releases)
+[![GitHub release](https://img.shields.io/github/release/Michailjovic/compact-timer-card.svg)](https://github.com/Michailjovic/compact-timer-card/releases)
 
 A sleek, fully customizable Home Assistant timer card with **live per-second countdown**, **warning/critical color zones**, **paused state support**, a **gradient progress bar with glow effect**, and a **built-in visual editor**.
 
 Built as a companion to [Universal Remote Card](https://github.com/nicufodineanu/universal-remote-card) to implement a **deadman switch** for TV auto-shutoff — but works with any HA timer entity.
 
-![Hero](https://raw.githubusercontent.com/michalic/compact-timer-card/main/assets/hero.png)
+![Hero](https://raw.githubusercontent.com/Michailjovic/compact-timer-card/main/assets/hero.png)
 
 ## The Problem This Solves
 
@@ -30,7 +30,7 @@ Universal Remote Card is great for controlling media devices, but it has no nati
 
 ## Timer States
 
-![States](https://raw.githubusercontent.com/michalic/compact-timer-card/main/assets/preview.png)
+![States](https://raw.githubusercontent.com/Michailjovic/compact-timer-card/main/assets/preview.png)
 
 | State | Visual |
 |---|---|
@@ -43,9 +43,9 @@ Universal Remote Card is great for controlling media devices, but it has no nati
 
 The bar and icon color change automatically as the timer runs down.
 
-![Warning state](https://raw.githubusercontent.com/michalic/compact-timer-card/main/assets/warning.png)
+![Warning state](https://raw.githubusercontent.com/Michailjovic/compact-timer-card/main/assets/warning.png)
 
-![Critical state](https://raw.githubusercontent.com/michalic/compact-timer-card/main/assets/critical.png)
+![Critical state](https://raw.githubusercontent.com/Michailjovic/compact-timer-card/main/assets/critical.png)
 
 ## Required Helper — HA Timer Entity
 
@@ -199,7 +199,7 @@ entities:
 
 This is the intended use case. The compact timer cards appear inline within the remote panel only when their timers are active.
 
-![Full setup](https://raw.githubusercontent.com/michalic/compact-timer-card/main/assets/hero.png)
+![Full setup](https://raw.githubusercontent.com/Michailjovic/compact-timer-card/main/assets/hero.png)
 
 ```yaml
 type: grid
