@@ -14,36 +14,12 @@ class CompactTimerCard extends HTMLElement {
     this._config = {};
     this._hass = null;
     this._initialized = false;
-    this._pointerDownTime = 0;
-    this._pointerDownX = 0;
-    this._pointerDownY = 0;
 
-    this.addEventListener('pointerdown', (e) => {
-      if (e.button !== undefined && e.button !== 0) return; // only left click on PC
-      // setPointerCapture ensures pointerup always arrives here,
-      // even if the mouse moves to another element before release
-      try { this.setPointerCapture(e.pointerId); } catch (_) {}
-      this._pointerDownTime = Date.now();
-      this._pointerDownX = e.clientX;
-      this._pointerDownY = e.clientY;
-    });
-
-    this.addEventListener('pointerup', (e) => {
-      try { this.releasePointerCapture(e.pointerId); } catch (_) {}
-      const dt = Date.now() - this._pointerDownTime;
-      const dx = Math.abs(e.clientX - this._pointerDownX);
-      const dy = Math.abs(e.clientY - this._pointerDownY);
-      // Valid tap: pressed < 500ms ago, moved < 10px
-      if (this._pointerDownTime > 0 && dt < 500 && dx < 10 && dy < 10) {
-        e.preventDefault();
-        e.stopPropagation();
-        this._pointerDownTime = 0;
-        this._handleTap();
-      }
-    });
-
-    this.addEventListener('pointercancel', () => {
-      this._pointerDownTime = 0;
+    // Native click — browser handles tap detection reliably on all devices.
+    // Listener is on the host element, so it survives every _tick() and _build().
+    this.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this._handleTap();
     });
   }
 
@@ -185,7 +161,6 @@ class CompactTimerCard extends HTMLElement {
           cursor: pointer;
           -webkit-tap-highlight-color: transparent;
           user-select: none;
-          touch-action: manipulation;
         }
 
         .card {
@@ -194,7 +169,6 @@ class CompactTimerCard extends HTMLElement {
           border-radius: 14px;
           padding: 10px 14px;
           transition: background 0.12s ease, transform 0.1s ease;
-          pointer-events: none;
         }
 
         :host(:active) .card {
@@ -278,6 +252,12 @@ class CompactTimerCard extends HTMLElement {
           border-radius: 3px;
           box-shadow: 0 0 6px ${ca(0.55)};
           transition: width 0.9s linear;
+        }
+
+        /* Inner elements never intercept the click — it always reaches :host */
+        .card, .row, .left, .right, .bar-wrap,
+        ha-icon, .label, .time, .cancel-badge, .bar-fill {
+          pointer-events: none;
         }
       </style>
 
