@@ -454,7 +454,10 @@ class CompactTimerCard extends HTMLElement {
   // ── Timer data ─────────────────────────────────────────────
 
   _getTimerData(entityId) {
-    if (!this._hass || !entityId) return null;
+    if (!this._hass || !entityId) {
+      return { state: 'loading', pct: 0, timeStr: '–', totalStr: null,
+               isActive: false, isPaused: false, isIdle: true };
+    }
     const stateObj = this._hass.states[entityId];
     if (!stateObj) {
       return { state: 'unknown', pct: 0, timeStr: '–', totalStr: null,
@@ -881,6 +884,6 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'compact-timer-card',
   name: 'Compact Timer Card',
-  description: 'Sleek timer card with live countdown, warning colors, configurable bar, pause support, and multi-timer stacked mode.',
-  preview: false,
+  description: 'Sleek timer card with live countdown, gradient bar, and deadman switch support.',
+  preview: true,
 });
