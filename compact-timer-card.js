@@ -1,11 +1,13 @@
 /**
  * Compact Timer Card
  * A sleek, fully customizable timer card for Home Assistant
- * with live countdown, warning colors, configurable progress bar,
+ * with live countdown, warning colors, notifications, configurable progress bar,
  * and multi-timer stacked mode.
  *
- * https://github.com/michalic/compact-timer-card
+ * https://github.com/Michailjovic/compact-timer-card
  */
+
+const CARD_VERSION = '1.0.0';
 
 // ============================================================
 //  Visual Editor
@@ -60,6 +62,8 @@ class CompactTimerCardEditor extends HTMLElement {
         .slider-row .val { font-size: 13px; font-weight: 700; color: var(--primary-text-color);
                            min-width: 36px; text-align: right; }
         .note { font-size: 11px; color: var(--secondary-text-color); font-style: italic; }
+        code { font-size: 11px; background: rgba(255,255,255,0.07); padding: 1px 4px;
+               border-radius: 4px; font-style: normal; }
       </style>
       <div class="form">
 
@@ -181,21 +185,70 @@ class CompactTimerCardEditor extends HTMLElement {
         </div>
 
         <hr class="divider" />
+        <h4>Notifications</h4>
+        <p class="note">Triggers once when the timer enters each zone. Requires the dashboard tab to be open. Use <code>{name}</code> and <code>{time}</code> in messages.</p>
+        <div class="field">
+          <label>Notify service (e.g. notify.my_android_tv)</label>
+          <input type="text" id="notify_service" value="${c.notify_service || ''}" placeholder="notify.my_device" />
+        </div>
+        <div class="check-field">
+          <input type="checkbox" id="notify_warning" ${c.notify_warning ? 'checked' : ''} />
+          <label for="notify_warning">Notify on warning zone</label>
+        </div>
+        <div class="threshold-block">
+          <div class="field">
+            <input type="text" id="notify_message_warning"
+                   value="${c.notify_message_warning || ''}"
+                   placeholder="{name} – {time} remaining" />
+          </div>
+        </div>
+        <div class="check-field">
+          <input type="checkbox" id="notify_critical" ${c.notify_critical ? 'checked' : ''} />
+          <label for="notify_critical">Notify on critical zone</label>
+        </div>
+        <div class="threshold-block">
+          <div class="field">
+            <input type="text" id="notify_message_critical"
+                   value="${c.notify_message_critical || ''}"
+                   placeholder="{name} – only {time} left!" />
+          </div>
+        </div>
+
+        <hr class="divider" />
+        <h4>Finish Action</h4>
+        <p class="note">Called when the timer finishes (browser must be open). Add a <code>timer.finished</code> automation in HA as a reliable background fallback.</p>
+        <div class="field">
+          <label>Action (domain.service)</label>
+          <input type="text" id="on_finish_action"
+                 value="${c.on_finish ? (c.on_finish.action || '') : ''}"
+                 placeholder="media_player.turn_off" />
+        </div>
+        <div class="field">
+          <label>Target entity ID</label>
+          <input type="text" id="on_finish_entity_id"
+                 value="${c.on_finish ? (c.on_finish.entity_id || '') : ''}"
+                 placeholder="media_player.my_tv" />
+        </div>
+
+        <hr class="divider" />
         <p class="note">For multiple timers in one card, use the <strong>entities</strong> list in YAML.</p>
+        <p class="note" style="text-align:right;margin-top:4px;opacity:0.5;">Compact Timer Card v${CARD_VERSION}</p>
 
       </div>
     `;
 
     // Text / color / number / select fields
     ['entity', 'name', 'icon', 'color', 'cancel_label', 'bar_height',
-     'bar_direction', 'bar_position', 'warning_color', 'critical_color', 'tap', 'hold'].forEach(id => {
+     'bar_direction', 'bar_position', 'warning_color', 'critical_color', 'tap', 'hold',
+     'notify_service', 'notify_message_warning', 'notify_message_critical',
+     'on_finish_action', 'on_finish_entity_id'].forEach(id => {
       const el = this.shadowRoot.getElementById(id);
       if (el) el.addEventListener('change', () => this._valueChanged());
     });
 
     // Checkboxes
     ['show_when_idle', 'show_duration', 'gradient_bar', 'pulse_icon', 'pulse_bar',
-     'warning_enabled', 'critical_enabled'].forEach(id => {
+     'warning_enabled', 'critical_enabled', 'notify_warning', 'notify_critical'].forEach(id => {
       const el = this.shadowRoot.getElementById(id);
       if (el) el.addEventListener('change', () => this._valueChanged());
     });
@@ -258,6 +311,31 @@ class CompactTimerCardEditor extends HTMLElement {
       delete newConfig.critical_threshold;
     }
 
+    // Notifications
+    const notifyService = get('notify_service')?.value?.trim();
+    if (notifyService) newConfig.notify_service = notifyService;
+    else delete newConfig.notify_service;
+
+    newConfig.notify_warning = get('notify_warning')?.checked || false;
+    const notifyMsgW = get('notify_message_warning')?.value?.trim();
+    if (notifyMsgW) newConfig.notify_message_warning = notifyMsgW;
+    else delete newConfig.notify_message_warning;
+
+    newConfig.notify_critical = get('notify_critical')?.checked || false;
+    const notifyMsgC = get('notify_message_critical')?.value?.trim();
+    if (notifyMsgC) newConfig.notify_message_critical = notifyMsgC;
+    else delete newConfig.notify_message_critical;
+
+    // Finish action
+    const finishAction = get('on_finish_action')?.value?.trim();
+    const finishEntityId = get('on_finish_entity_id')?.value?.trim();
+    if (finishAction) {
+      newConfig.on_finish = { action: finishAction };
+      if (finishEntityId) newConfig.on_finish.entity_id = finishEntityId;
+    } else {
+      delete newConfig.on_finish;
+    }
+
     this._config = newConfig;
     this.dispatchEvent(new CustomEvent('config-changed', {
       detail: { config: newConfig },
@@ -282,9 +360,10 @@ class CompactTimerCard extends HTMLElement {
     this._hass = null;
     this._initialized = false;
     this._lastZones = null;
+    this._lastNotifiedZones = {};
+    this._lastStates = {};
 
     // Stop propagation so HA's card wrapper doesn't handle our clicks.
-    // The actual tap action is handled by a delegated listener added in _build().
     this.addEventListener('click', (e) => e.stopPropagation());
   }
 
@@ -332,25 +411,36 @@ class CompactTimerCard extends HTMLElement {
       bar_direction: 'ltr',
       bar_position: 'bottom',
       tap_action: null,
+      notify_service: null,
+      notify_warning: false,
+      notify_critical: false,
+      notify_message_warning: '{name} \u2013 {time} remaining',
+      notify_message_critical: '{name} \u2013 only {time} left!',
+      on_finish: null,
       ...config,
     };
     this._initialized = false;
     this._lastZones = null;
+    this._lastNotifiedZones = {};
+    this._lastStates = {};
     this._build();
   }
 
   set hass(hass) {
     this._hass = hass;
+    const prevZones = this._lastZones;
     const newZones = this._getCurrentZones();
 
-    if (!this._initialized || newZones !== this._lastZones) {
+    this._checkOnFinish();
+
+    if (!this._initialized || newZones !== prevZones) {
       this._lastZones = newZones;
+      this._checkNotifications(prevZones, newZones);
       this._build();
     } else {
       this._tick();
     }
 
-    // Run interval only while at least one timer is active
     const hasActive = this._normalizeEntities()
       .some(ec => this._getTimerData(ec.entity)?.isActive);
     if (hasActive) this._startInterval(); else this._stopInterval();
@@ -374,7 +464,6 @@ class CompactTimerCard extends HTMLElement {
 
   _getTapAction() {
     if (this._config.tap) return this._config.tap;
-    // Legacy: cancel_on_tap
     return this._config.cancel_on_tap !== false ? 'cancel' : 'none';
   }
 
@@ -435,48 +524,40 @@ class CompactTimerCard extends HTMLElement {
   // ── Entity normalization ────────────────────────────────────
 
   _normalizeEntities() {
-    if (Array.isArray(this._config.entities) && this._config.entities.length > 0) {
-      return this._config.entities.map(e => ({
-        // Global defaults that entity config can override
-        icon: this._config.icon,
-        color: this._config.color,
-        warning_color: this._config.warning_color,
-        warning_threshold: this._config.warning_threshold,
-        critical_color: this._config.critical_color,
-        critical_threshold: this._config.critical_threshold,
-        ...e,
-      }));
-    }
-    return [{
-      entity: this._config.entity,
-      name: this._config.name,
+    const globals = {
       icon: this._config.icon,
       color: this._config.color,
       warning_color: this._config.warning_color,
       warning_threshold: this._config.warning_threshold,
       critical_color: this._config.critical_color,
       critical_threshold: this._config.critical_threshold,
-    }];
+      cancel_label: this._config.cancel_label,
+      show_duration: this._config.show_duration,
+      tap: this._config.tap,
+      hold: this._config.hold,
+    };
+    if (Array.isArray(this._config.entities) && this._config.entities.length > 0) {
+      return this._config.entities.map(e => ({ ...globals, ...e }));
+    }
+    return [{ ...globals, entity: this._config.entity, name: this._config.name }];
   }
 
   // ── Timer data ─────────────────────────────────────────────
 
   _getTimerData(entityId) {
     if (!this._hass || !entityId) {
-      return { state: 'loading', pct: 0, timeStr: '–', totalStr: null,
+      return { state: 'loading', pct: 0, timeStr: '\u2013', totalSec: 0,
                isActive: false, isPaused: false, isIdle: true };
     }
     const stateObj = this._hass.states[entityId];
     if (!stateObj) {
-      return { state: 'unknown', pct: 0, timeStr: '–', totalStr: null,
+      return { state: 'unknown', pct: 0, timeStr: '\u2013', totalSec: 0,
                isActive: false, isPaused: false, isIdle: false };
     }
 
     const state = stateObj.state;
     const attrs = stateObj.attributes;
     const durationSec = this._parseTimeSec(attrs.duration || '0:00:00');
-    const totalStr = this._config.show_duration && durationSec > 0
-      ? this._formatTime(durationSec) : null;
 
     if (state === 'active') {
       let remainingSec = 0;
@@ -485,7 +566,7 @@ class CompactTimerCard extends HTMLElement {
       }
       const pct = durationSec > 0
         ? Math.min(100, ((durationSec - remainingSec) / durationSec) * 100) : 0;
-      return { state, pct, timeStr: this._formatTime(remainingSec), totalStr,
+      return { state, pct, timeStr: this._formatTime(remainingSec), totalSec: durationSec,
                isActive: true, isPaused: false, isIdle: false };
     }
 
@@ -493,12 +574,12 @@ class CompactTimerCard extends HTMLElement {
       const remainingSec = this._parseTimeSec(attrs.remaining || '0:00:00');
       const pct = durationSec > 0
         ? Math.min(100, ((durationSec - remainingSec) / durationSec) * 100) : 0;
-      return { state, pct, timeStr: this._formatTime(remainingSec), totalStr,
+      return { state, pct, timeStr: this._formatTime(remainingSec), totalSec: durationSec,
                isActive: false, isPaused: true, isIdle: false };
     }
 
     const idleStr = durationSec > 0 ? this._formatTime(durationSec) : '0:00';
-    return { state, pct: 0, timeStr: idleStr, totalStr,
+    return { state, pct: 0, timeStr: idleStr, totalSec: durationSec,
              isActive: false, isPaused: false, isIdle: true };
   }
 
@@ -535,7 +616,6 @@ class CompactTimerCard extends HTMLElement {
   _handleTapForEntity(entityId) {
     if (!this._hass || !entityId) return;
 
-    // Advanced tap_action object (YAML) takes priority over simple 'tap' string
     if (this._config.tap_action) {
       const action = this._config.tap_action;
       if (action.action === 'call-service' || action.action === 'perform-action') {
@@ -560,7 +640,63 @@ class CompactTimerCard extends HTMLElement {
     this._executeTimerAction(this._getHoldAction(), entityId);
   }
 
-  // ── Build DOM ──────────────────────────────────────────────
+  // ── Notifications ──────────────────────────────────────────
+
+  _checkNotifications(prevZonesStr, newZonesStr) {
+    if (!this._config.notify_service || !prevZonesStr || !newZonesStr) return;
+    const [nDomain, nService] = this._config.notify_service.split('.');
+    if (!nDomain || !nService) return;
+
+    let prev, curr;
+    try { prev = JSON.parse(prevZonesStr); curr = JSON.parse(newZonesStr); }
+    catch (e) { return; }
+
+    for (const ec of this._normalizeEntities()) {
+      const eid = ec.entity;
+      const prevZone = (prev[eid] || '|normal').split('|')[1];
+      const currZone = (curr[eid] || '|normal').split('|')[1];
+      if (prevZone === currZone) continue;
+
+      const data = this._getTimerData(eid);
+      const name = ec.name || this._hass?.states[eid]?.attributes?.friendly_name || eid;
+
+      if (currZone === 'warning' && this._config.notify_warning) {
+        const msg = (this._config.notify_message_warning || '{name} \u2013 {time} remaining')
+          .replace('{name}', name).replace('{time}', data.timeStr);
+        this._hass.callService(nDomain, nService, { message: msg, title: name });
+      } else if (currZone === 'critical' && this._config.notify_critical) {
+        const msg = (this._config.notify_message_critical || '{name} \u2013 only {time} left!')
+          .replace('{name}', name).replace('{time}', data.timeStr);
+        this._hass.callService(nDomain, nService, { message: msg, title: name });
+      }
+    }
+  }
+
+  // ── Finish action ──────────────────────────────────────────
+
+  _checkOnFinish() {
+    if (!this._config.on_finish || !this._hass) return;
+    for (const ec of this._normalizeEntities()) {
+      const eid = ec.entity;
+      const data = this._getTimerData(eid);
+      const prev = this._lastStates[eid];
+      this._lastStates[eid] = data.state;
+
+      if ((prev === 'active' || prev === 'paused') && data.isIdle) {
+        const finish = this._config.on_finish;
+        const parts = (finish.action || '').split('.');
+        if (parts.length >= 2) {
+          const domain = parts[0];
+          const service = parts.slice(1).join('.');
+          const svcData = {};
+          if (finish.entity_id) svcData.entity_id = finish.entity_id;
+          this._hass.callService(domain, service, svcData);
+        }
+      }
+    }
+  }
+
+  // ── Build timer row HTML ───────────────────────────────────
 
   _buildTimerRowHtml(entityCfg, data) {
     const entityId = entityCfg.entity;
@@ -568,6 +704,11 @@ class CompactTimerCard extends HTMLElement {
     const name = entityCfg.name
       || stateObj?.attributes.friendly_name
       || entityId;
+
+    // Per-entity show_duration (falls back to global)
+    const showDuration = entityCfg.show_duration ?? this._config.show_duration;
+    const totalStr = showDuration && data.totalSec > 0
+      ? this._formatTime(data.totalSec) : null;
 
     const color = this._getActiveColor(data, entityCfg);
     const baseColor = entityCfg.color || '#63b3ed';
@@ -597,6 +738,9 @@ class CompactTimerCard extends HTMLElement {
         : `linear-gradient(90deg, ${ca(0.55)} 0%, ${color} 100%)`)
       : color;
 
+    // Per-entity cancel_label (falls back to global)
+    const cancelLabel = entityCfg.cancel_label || this._config.cancel_label || 'Cancel';
+
     let statusBadge = '';
     if (isUnknown) {
       statusBadge = `<span class="s-badge s-error">!</span>`;
@@ -610,12 +754,12 @@ class CompactTimerCard extends HTMLElement {
       if (tapAction === 'toggle_pause') {
         statusBadge = `<span class="s-cancel">&#x23F8; Pause</span>`;
       } else if (tapAction === 'cancel' && !this._config.tap_action) {
-        statusBadge = `<span class="s-cancel">${this._config.cancel_label || 'Cancel'}</span>`;
+        statusBadge = `<span class="s-cancel">${cancelLabel}</span>`;
       }
     }
 
-    const totalHtml = data.totalStr
-      ? `<span class="time-total" data-t="${entityId}">/ ${data.totalStr}</span>` : '';
+    const totalHtml = totalStr
+      ? `<span class="time-total" data-t="${entityId}">/ ${totalStr}</span>` : '';
 
     const barMargin = isBarTop ? 'margin:0 0 6px 0' : 'margin:6px 0 0 0';
 
@@ -764,15 +908,6 @@ class CompactTimerCard extends HTMLElement {
           line-height: 1;
           pointer-events: none;
         }
-        .time-total {
-          font-size: 11px;
-          font-weight: 500;
-          color: var(--secondary-text-color, rgba(255,255,255,0.28));
-          font-variant-numeric: tabular-nums;
-          font-family: sans-serif;
-          line-height: 1;
-          pointer-events: none;
-        }
         .s-cancel {
           font-size: 9px;
           color: var(--secondary-text-color, rgba(255,255,255,0.22));
@@ -855,6 +990,7 @@ class CompactTimerCard extends HTMLElement {
       }, { passive: true });
       cardEl.addEventListener('touchend', cancelHold);
       cardEl.addEventListener('touchmove', cancelHold, { passive: true });
+      cardEl.addEventListener('touchcancel', cancelHold);
 
       cardEl.addEventListener('click', (e) => {
         if (holdFired) { holdFired = false; return; }
@@ -866,7 +1002,7 @@ class CompactTimerCard extends HTMLElement {
     this._initialized = true;
   }
 
-  // Tick -- updates only changing values each second
+  // ── Tick — updates only changing values each second ────────
 
   _tick() {
     if (!this._initialized) return;
@@ -885,7 +1021,7 @@ class CompactTimerCard extends HTMLElement {
 
       if (timeEl) timeEl.textContent = data.timeStr;
       if (barEl)  barEl.style.width = `${barWidth}%`;
-      if (totEl && data.totalStr) totEl.textContent = `/ ${data.totalStr}`;
+      if (totEl && data.totalSec > 0) totEl.textContent = `/ ${this._formatTime(data.totalSec)}`;
     }
   }
 
@@ -900,6 +1036,6 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'compact-timer-card',
   name: 'Compact Timer Card',
-  description: 'Sleek timer card with live countdown, gradient bar, and deadman switch support.',
+  description: 'Sleek timer card with live countdown, gradient bar, notifications, and deadman switch support.',
   preview: true,
 });
