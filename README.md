@@ -144,6 +144,9 @@ critical_threshold: 10
 | `tap` | string | `cancel` | Tap action: `cancel`, `toggle_pause`, `none` |
 | `hold` | string | `none` | Hold action (~500 ms): `none`, `cancel`, `toggle_pause` |
 | `cancel_label` | string | `Cancel` | Text shown on the cancel badge |
+| `pause_label` | string | `Pause` | Badge text when tap action is `toggle_pause` and timer is active |
+| `resume_label` | string | `Resume` | Badge text when tap action is `toggle_pause` and timer is paused |
+| `paused_label` | string | `Paused` | Badge text when timer is paused and tap action is not `toggle_pause` |
 | `show_duration` | boolean | `false` | Show total duration next to remaining time (e.g. `1:23 / 30:00`) |
 | `show_when_idle` | boolean | `false` | Keep card visible when timer is idle |
 | `gradient_bar` | boolean | `true` | Gradient on the progress bar instead of flat color |

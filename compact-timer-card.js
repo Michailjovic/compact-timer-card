@@ -1,8 +1,8 @@
 /**
  * Compact Timer Card
  * A sleek, fully customizable timer card for Home Assistant
- * with live countdown, warning colors, notifications, configurable progress bar,
- * and multi-timer stacked mode.
+ * with live countdown, warning/critical color zones, configurable progress bar,
+ * stacked multi-timer mode, and a built-in visual editor.
  *
  * https://github.com/Michailjovic/compact-timer-card
  */
@@ -62,8 +62,7 @@ class CompactTimerCardEditor extends HTMLElement {
         .slider-row .val { font-size: 13px; font-weight: 700; color: var(--primary-text-color);
                            min-width: 36px; text-align: right; }
         .note { font-size: 11px; color: var(--secondary-text-color); font-style: italic; }
-        code { font-size: 11px; background: rgba(255,255,255,0.07); padding: 1px 4px;
-               border-radius: 4px; font-style: normal; }
+        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
       </style>
       <div class="form">
 
@@ -110,8 +109,8 @@ class CompactTimerCardEditor extends HTMLElement {
         <div class="field">
           <label>Progress bar direction</label>
           <select id="bar_direction">
-            <option value="ltr" ${(c.bar_direction || 'ltr') === 'ltr' ? 'selected' : ''}>&#x2192; Fill (shows elapsed time)</option>
-            <option value="rtl" ${c.bar_direction === 'rtl' ? 'selected' : ''}>&#x2190; Empty (shows remaining time)</option>
+            <option value="ltr" ${(c.bar_direction || 'ltr') === 'ltr' ? 'selected' : ''}>&rarr; Fill (shows elapsed time)</option>
+            <option value="rtl" ${c.bar_direction === 'rtl' ? 'selected' : ''}>&larr; Empty (shows remaining time)</option>
           </select>
         </div>
         <div class="field">
@@ -179,55 +178,27 @@ class CompactTimerCardEditor extends HTMLElement {
             <option value="toggle_pause" ${c.hold === 'toggle_pause'              ? 'selected' : ''}>Pause / Resume</option>
           </select>
         </div>
-        <div class="field">
-          <label>Cancel badge label</label>
-          <input type="text" id="cancel_label" value="${c.cancel_label || ''}" placeholder="Cancel" />
-        </div>
 
         <hr class="divider" />
-        <h4>Notifications</h4>
-        <p class="note">Triggers once when the timer enters each zone. Requires the dashboard tab to be open. Use <code>{name}</code> and <code>{time}</code> in messages.</p>
-        <div class="field">
-          <label>Notify service (e.g. notify.my_android_tv)</label>
-          <input type="text" id="notify_service" value="${c.notify_service || ''}" placeholder="notify.my_device" />
-        </div>
-        <div class="check-field">
-          <input type="checkbox" id="notify_warning" ${c.notify_warning ? 'checked' : ''} />
-          <label for="notify_warning">Notify on warning zone</label>
-        </div>
-        <div class="threshold-block">
+        <h4>Labels</h4>
+        <p class="note">Customize badge text for your language.</p>
+        <div class="two-col">
           <div class="field">
-            <input type="text" id="notify_message_warning"
-                   value="${c.notify_message_warning || ''}"
-                   placeholder="{name} – {time} remaining" />
+            <label>Cancel badge</label>
+            <input type="text" id="cancel_label" value="${c.cancel_label || ''}" placeholder="Cancel" />
           </div>
-        </div>
-        <div class="check-field">
-          <input type="checkbox" id="notify_critical" ${c.notify_critical ? 'checked' : ''} />
-          <label for="notify_critical">Notify on critical zone</label>
-        </div>
-        <div class="threshold-block">
           <div class="field">
-            <input type="text" id="notify_message_critical"
-                   value="${c.notify_message_critical || ''}"
-                   placeholder="{name} – only {time} left!" />
+            <label>Paused badge</label>
+            <input type="text" id="paused_label" value="${c.paused_label || ''}" placeholder="Paused" />
           </div>
-        </div>
-
-        <hr class="divider" />
-        <h4>Finish Action</h4>
-        <p class="note">Called when the timer finishes (browser must be open). Add a <code>timer.finished</code> automation in HA as a reliable background fallback.</p>
-        <div class="field">
-          <label>Action (domain.service)</label>
-          <input type="text" id="on_finish_action"
-                 value="${c.on_finish ? (c.on_finish.action || '') : ''}"
-                 placeholder="media_player.turn_off" />
-        </div>
-        <div class="field">
-          <label>Target entity ID</label>
-          <input type="text" id="on_finish_entity_id"
-                 value="${c.on_finish ? (c.on_finish.entity_id || '') : ''}"
-                 placeholder="media_player.my_tv" />
+          <div class="field">
+            <label>Pause action</label>
+            <input type="text" id="pause_label" value="${c.pause_label || ''}" placeholder="Pause" />
+          </div>
+          <div class="field">
+            <label>Resume action</label>
+            <input type="text" id="resume_label" value="${c.resume_label || ''}" placeholder="Resume" />
+          </div>
         </div>
 
         <hr class="divider" />
@@ -237,23 +208,21 @@ class CompactTimerCardEditor extends HTMLElement {
       </div>
     `;
 
-    // Text / color / number / select fields
-    ['entity', 'name', 'icon', 'color', 'cancel_label', 'bar_height',
-     'bar_direction', 'bar_position', 'warning_color', 'critical_color', 'tap', 'hold',
-     'notify_service', 'notify_message_warning', 'notify_message_critical',
-     'on_finish_action', 'on_finish_entity_id'].forEach(id => {
+    ['entity', 'name', 'icon', 'color',
+     'cancel_label', 'pause_label', 'resume_label', 'paused_label',
+     'bar_height', 'bar_direction', 'bar_position',
+     'warning_color', 'critical_color',
+     'tap', 'hold'].forEach(id => {
       const el = this.shadowRoot.getElementById(id);
       if (el) el.addEventListener('change', () => this._valueChanged());
     });
 
-    // Checkboxes
     ['show_when_idle', 'show_duration', 'gradient_bar', 'pulse_icon', 'pulse_bar',
-     'warning_enabled', 'critical_enabled', 'notify_warning', 'notify_critical'].forEach(id => {
+     'warning_enabled', 'critical_enabled'].forEach(id => {
       const el = this.shadowRoot.getElementById(id);
       if (el) el.addEventListener('change', () => this._valueChanged());
     });
 
-    // Range sliders — live label update + fire on release
     const wSlider = this.shadowRoot.getElementById('warning_threshold');
     const wDisplay = this.shadowRoot.getElementById('wt_display');
     if (wSlider) {
@@ -273,30 +242,33 @@ class CompactTimerCardEditor extends HTMLElement {
     const newConfig = { ...this._config };
 
     newConfig.entity = get('entity').value;
-
     const name = get('name').value;
     if (name) newConfig.name = name; else delete newConfig.name;
-
     const icon = get('icon').value;
     if (icon) newConfig.icon = icon; else delete newConfig.icon;
-
     newConfig.color = get('color').value;
     newConfig.show_when_idle = get('show_when_idle').checked;
-    newConfig.show_duration = get('show_duration').checked;
-    newConfig.gradient_bar = get('gradient_bar').checked;
-    newConfig.pulse_icon = get('pulse_icon').checked;
-    newConfig.pulse_bar = get('pulse_bar').checked;
-    newConfig.bar_height = parseInt(get('bar_height').value, 10) || 3;
-    newConfig.bar_direction = get('bar_direction').value;
-    newConfig.bar_position = get('bar_position').value;
-    newConfig.tap  = get('tap').value;
-    newConfig.hold = get('hold').value;
+    newConfig.show_duration  = get('show_duration').checked;
+    newConfig.gradient_bar   = get('gradient_bar').checked;
+    newConfig.pulse_icon     = get('pulse_icon').checked;
+    newConfig.pulse_bar      = get('pulse_bar').checked;
+    newConfig.bar_height     = parseInt(get('bar_height').value, 10) || 3;
+    newConfig.bar_direction  = get('bar_direction').value;
+    newConfig.bar_position   = get('bar_position').value;
+    newConfig.tap            = get('tap').value;
+    newConfig.hold           = get('hold').value;
 
     const cancelLabel = get('cancel_label').value;
     if (cancelLabel) newConfig.cancel_label = cancelLabel; else delete newConfig.cancel_label;
+    const pauseLabel = get('pause_label').value;
+    if (pauseLabel) newConfig.pause_label = pauseLabel; else delete newConfig.pause_label;
+    const resumeLabel = get('resume_label').value;
+    if (resumeLabel) newConfig.resume_label = resumeLabel; else delete newConfig.resume_label;
+    const pausedLabel = get('paused_label').value;
+    if (pausedLabel) newConfig.paused_label = pausedLabel; else delete newConfig.paused_label;
 
     if (get('warning_enabled').checked) {
-      newConfig.warning_color = get('warning_color').value;
+      newConfig.warning_color     = get('warning_color').value;
       newConfig.warning_threshold = parseInt(get('warning_threshold').value, 10);
     } else {
       delete newConfig.warning_color;
@@ -304,36 +276,11 @@ class CompactTimerCardEditor extends HTMLElement {
     }
 
     if (get('critical_enabled').checked) {
-      newConfig.critical_color = get('critical_color').value;
+      newConfig.critical_color     = get('critical_color').value;
       newConfig.critical_threshold = parseInt(get('critical_threshold').value, 10);
     } else {
       delete newConfig.critical_color;
       delete newConfig.critical_threshold;
-    }
-
-    // Notifications
-    const notifyService = get('notify_service')?.value?.trim();
-    if (notifyService) newConfig.notify_service = notifyService;
-    else delete newConfig.notify_service;
-
-    newConfig.notify_warning = get('notify_warning')?.checked || false;
-    const notifyMsgW = get('notify_message_warning')?.value?.trim();
-    if (notifyMsgW) newConfig.notify_message_warning = notifyMsgW;
-    else delete newConfig.notify_message_warning;
-
-    newConfig.notify_critical = get('notify_critical')?.checked || false;
-    const notifyMsgC = get('notify_message_critical')?.value?.trim();
-    if (notifyMsgC) newConfig.notify_message_critical = notifyMsgC;
-    else delete newConfig.notify_message_critical;
-
-    // Finish action
-    const finishAction = get('on_finish_action')?.value?.trim();
-    const finishEntityId = get('on_finish_entity_id')?.value?.trim();
-    if (finishAction) {
-      newConfig.on_finish = { action: finishAction };
-      if (finishEntityId) newConfig.on_finish.entity_id = finishEntityId;
-    } else {
-      delete newConfig.on_finish;
     }
 
     this._config = newConfig;
@@ -355,15 +302,12 @@ class CompactTimerCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
-    this._interval = null;
-    this._config = {};
-    this._hass = null;
+    this._interval  = null;
+    this._config    = {};
+    this._hass      = null;
     this._initialized = false;
     this._lastZones = null;
-    this._lastNotifiedZones = {};
-    this._lastStates = {};
 
-    // Stop propagation so HA's card wrapper doesn't handle our clicks.
     this.addEventListener('click', (e) => e.stopPropagation());
   }
 
@@ -380,6 +324,9 @@ class CompactTimerCard extends HTMLElement {
       tap: 'cancel',
       hold: 'none',
       cancel_label: 'Cancel',
+      pause_label: 'Pause',
+      resume_label: 'Resume',
+      paused_label: 'Paused',
       show_duration: false,
       show_when_idle: false,
       gradient_bar: true,
@@ -392,7 +339,7 @@ class CompactTimerCard extends HTMLElement {
   }
 
   setConfig(config) {
-    const hasEntity = config.entity;
+    const hasEntity   = config.entity;
     const hasEntities = Array.isArray(config.entities) && config.entities.length > 0;
     if (!hasEntity && !hasEntities) throw new Error('entity or entities is required');
 
@@ -402,6 +349,9 @@ class CompactTimerCard extends HTMLElement {
       tap: 'cancel',
       hold: 'none',
       cancel_label: 'Cancel',
+      pause_label: 'Pause',
+      resume_label: 'Resume',
+      paused_label: 'Paused',
       show_duration: false,
       show_when_idle: false,
       gradient_bar: true,
@@ -411,31 +361,20 @@ class CompactTimerCard extends HTMLElement {
       bar_direction: 'ltr',
       bar_position: 'bottom',
       tap_action: null,
-      notify_service: null,
-      notify_warning: false,
-      notify_critical: false,
-      notify_message_warning: '{name} \u2013 {time} remaining',
-      notify_message_critical: '{name} \u2013 only {time} left!',
-      on_finish: null,
       ...config,
     };
     this._initialized = false;
-    this._lastZones = null;
-    this._lastNotifiedZones = {};
-    this._lastStates = {};
+    this._lastZones   = null;
     this._build();
   }
 
   set hass(hass) {
     this._hass = hass;
     const prevZones = this._lastZones;
-    const newZones = this._getCurrentZones();
-
-    this._checkOnFinish();
+    const newZones  = this._getCurrentZones();
 
     if (!this._initialized || newZones !== prevZones) {
       this._lastZones = newZones;
-      this._checkNotifications(prevZones, newZones);
       this._build();
     } else {
       this._tick();
@@ -446,7 +385,7 @@ class CompactTimerCard extends HTMLElement {
     if (hasActive) this._startInterval(); else this._stopInterval();
   }
 
-  connectedCallback() { if (this._hass) this._startInterval(); }
+  connectedCallback()    { if (this._hass) this._startInterval(); }
   disconnectedCallback() { this._stopInterval(); }
 
   // ── Interval ───────────────────────────────────────────────
@@ -460,16 +399,10 @@ class CompactTimerCard extends HTMLElement {
     if (this._interval) { clearInterval(this._interval); this._interval = null; }
   }
 
-  // ── Action resolution (backward compat with cancel_on_tap) ─
+  // ── Action resolution ──────────────────────────────────────
 
-  _getTapAction() {
-    if (this._config.tap) return this._config.tap;
-    return this._config.cancel_on_tap !== false ? 'cancel' : 'none';
-  }
-
-  _getHoldAction() {
-    return this._config.hold || 'none';
-  }
+  _getTapAction()  { return this._config.tap  || 'cancel'; }
+  _getHoldAction() { return this._config.hold || 'none';   }
 
   _executeTimerAction(action, entityId) {
     if (!this._hass || !entityId || action === 'none') return;
@@ -488,8 +421,7 @@ class CompactTimerCard extends HTMLElement {
       }
     } else if (action === 'more_info') {
       this.dispatchEvent(new CustomEvent('hass-more-info', {
-        bubbles: true, composed: true,
-        detail: { entityId },
+        bubbles: true, composed: true, detail: { entityId },
       }));
     }
   }
@@ -506,7 +438,7 @@ class CompactTimerCard extends HTMLElement {
 
   _parseTimeSec(str) {
     if (!str) return 0;
-    const p = str.split(':').map(Number);
+    const p = String(str).split(':').map(Number);
     if (p.length === 3) return (p[0] || 0) * 3600 + (p[1] || 0) * 60 + (p[2] || 0);
     if (p.length === 2) return (p[0] || 0) * 60 + (p[1] || 0);
     return 0;
@@ -525,16 +457,19 @@ class CompactTimerCard extends HTMLElement {
 
   _normalizeEntities() {
     const globals = {
-      icon: this._config.icon,
-      color: this._config.color,
-      warning_color: this._config.warning_color,
-      warning_threshold: this._config.warning_threshold,
-      critical_color: this._config.critical_color,
+      icon:               this._config.icon,
+      color:              this._config.color,
+      warning_color:      this._config.warning_color,
+      warning_threshold:  this._config.warning_threshold,
+      critical_color:     this._config.critical_color,
       critical_threshold: this._config.critical_threshold,
-      cancel_label: this._config.cancel_label,
-      show_duration: this._config.show_duration,
-      tap: this._config.tap,
-      hold: this._config.hold,
+      cancel_label:       this._config.cancel_label,
+      pause_label:        this._config.pause_label,
+      resume_label:       this._config.resume_label,
+      paused_label:       this._config.paused_label,
+      show_duration:      this._config.show_duration,
+      tap:                this._config.tap,
+      hold:               this._config.hold,
     };
     if (Array.isArray(this._config.entities) && this._config.entities.length > 0) {
       return this._config.entities.map(e => ({ ...globals, ...e }));
@@ -546,17 +481,17 @@ class CompactTimerCard extends HTMLElement {
 
   _getTimerData(entityId) {
     if (!this._hass || !entityId) {
-      return { state: 'loading', pct: 0, timeStr: '\u2013', totalSec: 0,
+      return { state: 'loading', pct: 0, timeStr: '–', totalSec: 0,
                isActive: false, isPaused: false, isIdle: true };
     }
     const stateObj = this._hass.states[entityId];
     if (!stateObj) {
-      return { state: 'unknown', pct: 0, timeStr: '\u2013', totalSec: 0,
+      return { state: 'unknown', pct: 0, timeStr: '–', totalSec: 0,
                isActive: false, isPaused: false, isIdle: false };
     }
 
-    const state = stateObj.state;
-    const attrs = stateObj.attributes;
+    const state      = stateObj.state;
+    const attrs      = stateObj.attributes;
     const durationSec = this._parseTimeSec(attrs.duration || '0:00:00');
 
     if (state === 'active') {
@@ -566,16 +501,16 @@ class CompactTimerCard extends HTMLElement {
       }
       const pct = durationSec > 0
         ? Math.min(100, ((durationSec - remainingSec) / durationSec) * 100) : 0;
-      return { state, pct, timeStr: this._formatTime(remainingSec), totalSec: durationSec,
-               isActive: true, isPaused: false, isIdle: false };
+      return { state, pct, timeStr: this._formatTime(remainingSec),
+               totalSec: durationSec, isActive: true, isPaused: false, isIdle: false };
     }
 
     if (state === 'paused') {
       const remainingSec = this._parseTimeSec(attrs.remaining || '0:00:00');
       const pct = durationSec > 0
         ? Math.min(100, ((durationSec - remainingSec) / durationSec) * 100) : 0;
-      return { state, pct, timeStr: this._formatTime(remainingSec), totalSec: durationSec,
-               isActive: false, isPaused: true, isIdle: false };
+      return { state, pct, timeStr: this._formatTime(remainingSec),
+               totalSec: durationSec, isActive: false, isPaused: true, isIdle: false };
     }
 
     const idleStr = durationSec > 0 ? this._formatTime(durationSec) : '0:00';
@@ -583,22 +518,22 @@ class CompactTimerCard extends HTMLElement {
              isActive: false, isPaused: false, isIdle: true };
   }
 
-  // ── Warning color thresholds ───────────────────────────────
+  // ── Threshold zones ────────────────────────────────────────
 
   _getThresholdZone(data, entityCfg) {
     if (!data?.isActive) return 'normal';
     const pctRemaining = 100 - data.pct;
-    const critThresh = entityCfg.critical_threshold ?? 5;
-    const warnThresh = entityCfg.warning_threshold ?? 20;
+    const critThresh   = entityCfg.critical_threshold ?? 5;
+    const warnThresh   = entityCfg.warning_threshold  ?? 20;
     if (entityCfg.critical_color && pctRemaining <= critThresh) return 'critical';
-    if (entityCfg.warning_color && pctRemaining <= warnThresh) return 'warning';
+    if (entityCfg.warning_color  && pctRemaining <= warnThresh) return 'warning';
     return 'normal';
   }
 
   _getActiveColor(data, entityCfg) {
     const zone = this._getThresholdZone(data, entityCfg);
     if (zone === 'critical') return entityCfg.critical_color;
-    if (zone === 'warning') return entityCfg.warning_color;
+    if (zone === 'warning')  return entityCfg.warning_color;
     return entityCfg.color || '#63b3ed';
   }
 
@@ -611,11 +546,10 @@ class CompactTimerCard extends HTMLElement {
     return JSON.stringify(zones);
   }
 
-  // ── Tap / Hold handling ────────────────────────────────────
+  // ── Tap / Hold ─────────────────────────────────────────────
 
   _handleTapForEntity(entityId) {
     if (!this._hass || !entityId) return;
-
     if (this._config.tap_action) {
       const action = this._config.tap_action;
       if (action.action === 'call-service' || action.action === 'perform-action') {
@@ -626,13 +560,11 @@ class CompactTimerCard extends HTMLElement {
         window.dispatchEvent(new Event('location-changed'));
       } else if (action.action === 'more-info') {
         this.dispatchEvent(new CustomEvent('hass-more-info', {
-          bubbles: true, composed: true,
-          detail: { entityId },
+          bubbles: true, composed: true, detail: { entityId },
         }));
       }
       return;
     }
-
     this._executeTimerAction(this._getTapAction(), entityId);
   }
 
@@ -640,97 +572,37 @@ class CompactTimerCard extends HTMLElement {
     this._executeTimerAction(this._getHoldAction(), entityId);
   }
 
-  // ── Notifications ──────────────────────────────────────────
-
-  _checkNotifications(prevZonesStr, newZonesStr) {
-    if (!this._config.notify_service || !prevZonesStr || !newZonesStr) return;
-    const [nDomain, nService] = this._config.notify_service.split('.');
-    if (!nDomain || !nService) return;
-
-    let prev, curr;
-    try { prev = JSON.parse(prevZonesStr); curr = JSON.parse(newZonesStr); }
-    catch (e) { return; }
-
-    for (const ec of this._normalizeEntities()) {
-      const eid = ec.entity;
-      const prevZone = (prev[eid] || '|normal').split('|')[1];
-      const currZone = (curr[eid] || '|normal').split('|')[1];
-      if (prevZone === currZone) continue;
-
-      const data = this._getTimerData(eid);
-      const name = ec.name || this._hass?.states[eid]?.attributes?.friendly_name || eid;
-
-      if (currZone === 'warning' && this._config.notify_warning) {
-        const msg = (this._config.notify_message_warning || '{name} \u2013 {time} remaining')
-          .replace('{name}', name).replace('{time}', data.timeStr);
-        this._hass.callService(nDomain, nService, { message: msg, title: name });
-      } else if (currZone === 'critical' && this._config.notify_critical) {
-        const msg = (this._config.notify_message_critical || '{name} \u2013 only {time} left!')
-          .replace('{name}', name).replace('{time}', data.timeStr);
-        this._hass.callService(nDomain, nService, { message: msg, title: name });
-      }
-    }
-  }
-
-  // ── Finish action ──────────────────────────────────────────
-
-  _checkOnFinish() {
-    if (!this._config.on_finish || !this._hass) return;
-    for (const ec of this._normalizeEntities()) {
-      const eid = ec.entity;
-      const data = this._getTimerData(eid);
-      const prev = this._lastStates[eid];
-      this._lastStates[eid] = data.state;
-
-      if ((prev === 'active' || prev === 'paused') && data.isIdle) {
-        const finish = this._config.on_finish;
-        const parts = (finish.action || '').split('.');
-        if (parts.length >= 2) {
-          const domain = parts[0];
-          const service = parts.slice(1).join('.');
-          const svcData = {};
-          if (finish.entity_id) svcData.entity_id = finish.entity_id;
-          this._hass.callService(domain, service, svcData);
-        }
-      }
-    }
-  }
-
   // ── Build timer row HTML ───────────────────────────────────
 
   _buildTimerRowHtml(entityCfg, data) {
-    const entityId = entityCfg.entity;
-    const stateObj = this._hass && this._hass.states[entityId];
-    const name = entityCfg.name
-      || stateObj?.attributes.friendly_name
-      || entityId;
+    const entityId  = entityCfg.entity;
+    const stateObj  = this._hass && this._hass.states[entityId];
+    const name      = entityCfg.name || stateObj?.attributes.friendly_name || entityId;
 
-    // Per-entity show_duration (falls back to global)
     const showDuration = entityCfg.show_duration ?? this._config.show_duration;
-    const totalStr = showDuration && data.totalSec > 0
+    const totalStr     = showDuration && data.totalSec > 0
       ? this._formatTime(data.totalSec) : null;
 
-    const color = this._getActiveColor(data, entityCfg);
+    const color   = this._getActiveColor(data, entityCfg);
     const baseColor = entityCfg.color || '#63b3ed';
-    const ca = (a) => this._rgba(color, a);
-    const baseCa = (a) => this._rgba(baseColor, a);
+    const ca      = (a) => this._rgba(color, a);
+    const baseCa  = (a) => this._rgba(baseColor, a);
 
-    const isActive = data.isActive;
-    const isPaused = data.isPaused;
+    const isActive  = data.isActive;
+    const isPaused  = data.isPaused;
     const isUnknown = data.state === 'unknown';
     const tapAction = this._getTapAction();
-    const doPulse = this._config.pulse_icon !== false && isActive;
-    const zone = this._getThresholdZone(data, entityCfg);
+    const doPulse   = this._config.pulse_icon !== false && isActive;
+    const zone      = this._getThresholdZone(data, entityCfg);
     const doPulseBar = this._config.pulse_bar === true && isActive
       && (zone === 'warning' || zone === 'critical');
-    const isRTL = this._config.bar_direction === 'rtl';
-    const isBarTop = this._config.bar_position === 'top';
+    const isRTL     = this._config.bar_direction === 'rtl';
+    const isBarTop  = this._config.bar_position  === 'top';
     const barHeight = Math.max(1, parseInt(this._config.bar_height, 10) || 3);
 
-    const timeColor = isActive ? color : ca(0.45);
+    const timeColor  = isActive ? color : ca(0.45);
     const barOpacity = isPaused ? '0.45' : '1';
-    const barWidth = isRTL ? (100 - data.pct) : data.pct;
-
+    const barWidth   = isRTL ? (100 - data.pct) : data.pct;
     const gradientBar = this._config.gradient_bar !== false;
     const barBg = gradientBar
       ? (isRTL
@@ -738,30 +610,31 @@ class CompactTimerCard extends HTMLElement {
         : `linear-gradient(90deg, ${ca(0.55)} 0%, ${color} 100%)`)
       : color;
 
-    // Per-entity cancel_label (falls back to global)
     const cancelLabel = entityCfg.cancel_label || this._config.cancel_label || 'Cancel';
+    const pauseLabel  = entityCfg.pause_label  || this._config.pause_label  || 'Pause';
+    const resumeLabel = entityCfg.resume_label || this._config.resume_label || 'Resume';
+    const pausedLabel = entityCfg.paused_label || this._config.paused_label || 'Paused';
 
     let statusBadge = '';
     if (isUnknown) {
       statusBadge = `<span class="s-badge s-error">!</span>`;
     } else if (isPaused) {
       if (tapAction === 'toggle_pause') {
-        statusBadge = `<span class="s-cancel">&#x25B6; Resume</span>`;
+        statusBadge = `<span class="s-cancel">&#x25B6; ${resumeLabel}</span>`;
       } else {
-        statusBadge = `<span class="s-badge" style="color:${ca(0.7)};border-color:${ca(0.3)};">&#x23F8; Paused</span>`;
+        statusBadge = `<span class="s-badge" style="color:${ca(0.7)};border-color:${ca(0.3)};">&#x23F8; ${pausedLabel}</span>`;
       }
     } else if (isActive) {
       if (tapAction === 'toggle_pause') {
-        statusBadge = `<span class="s-cancel">&#x23F8; Pause</span>`;
+        statusBadge = `<span class="s-cancel">&#x23F8; ${pauseLabel}</span>`;
       } else if (tapAction === 'cancel' && !this._config.tap_action) {
         statusBadge = `<span class="s-cancel">${cancelLabel}</span>`;
       }
     }
 
-    const totalHtml = totalStr
+    const totalHtml  = totalStr
       ? `<span class="time-total" data-t="${entityId}">/ ${totalStr}</span>` : '';
-
-    const barMargin = isBarTop ? 'margin:0 0 6px 0' : 'margin:6px 0 0 0';
+    const barMargin  = isBarTop ? 'margin:0 0 6px 0' : 'margin:6px 0 0 0';
 
     const barHtml = `
       <div class="bar-wrap${isRTL ? ' bar-rtl' : ''}"
@@ -791,15 +664,9 @@ class CompactTimerCard extends HTMLElement {
   }
 
   _build() {
-    const entities = this._normalizeEntities();
-    const entityData = entities.map(ec => ({
-      cfg: ec,
-      data: this._getTimerData(ec.entity),
-    }));
-
-    const visible = entityData.filter(({ data }) =>
-      this._config.show_when_idle || !data.isIdle
-    );
+    const entities    = this._normalizeEntities();
+    const entityData  = entities.map(ec => ({ cfg: ec, data: this._getTimerData(ec.entity) }));
+    const visible     = entityData.filter(({ data }) => this._config.show_when_idle || !data.isIdle);
 
     if (visible.length === 0) {
       this.shadowRoot.innerHTML = '<style>:host { display: none !important; }</style>';
@@ -809,11 +676,10 @@ class CompactTimerCard extends HTMLElement {
     }
 
     this.style.display = '';
-
-    const firstCfg = visible[0].cfg;
-    const firstData = visible[0].data;
+    const firstCfg    = visible[0].cfg;
+    const firstData   = visible[0].data;
     const accentColor = this._getActiveColor(firstData, firstCfg);
-    const cardCa = (a) => this._rgba(accentColor, a);
+    const cardCa      = (a) => this._rgba(accentColor, a);
 
     const rowsHtml = visible.map(({ cfg, data }, i) => {
       const row = this._buildTimerRowHtml(cfg, data);
@@ -822,48 +688,27 @@ class CompactTimerCard extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
       <style>
-        :host {
-          display: block;
-          -webkit-tap-highlight-color: transparent;
-          user-select: none;
-        }
+        :host { display: block; -webkit-tap-highlight-color: transparent; user-select: none; }
         .card {
           background: ${cardCa(0.05)};
           border: 1px solid ${cardCa(0.18)};
-          border-radius: 14px;
-          padding: 10px 14px;
+          border-radius: 14px; padding: 10px 14px;
           transition: background 0.12s ease;
         }
         .timer-row {
-          cursor: pointer;
-          pointer-events: auto;
-          border-radius: 6px;
+          cursor: pointer; pointer-events: auto; border-radius: 6px;
           transition: opacity 0.1s ease, transform 0.1s ease;
         }
-        .timer-row:active {
-          opacity: 0.75;
-          transform: scale(0.99);
-        }
+        .timer-row:active { opacity: 0.75; transform: scale(0.99); }
         .info-row {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 10px;
-          pointer-events: none;
+          display: flex; align-items: center; justify-content: space-between;
+          gap: 10px; pointer-events: none;
         }
         .left {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          flex: 1;
-          min-width: 0;
-          pointer-events: none;
+          display: flex; align-items: center; gap: 8px;
+          flex: 1; min-width: 0; pointer-events: none;
         }
-        ha-icon {
-          --mdc-icon-size: 15px;
-          flex-shrink: 0;
-          pointer-events: none;
-        }
+        ha-icon { --mdc-icon-size: 15px; flex-shrink: 0; pointer-events: none; }
         @keyframes pulse-icon {
           0%, 100% { opacity: 1; transform: scale(1); }
           50%       { opacity: 0.45; transform: scale(0.85); }
@@ -873,87 +718,45 @@ class CompactTimerCard extends HTMLElement {
           50%       { opacity: 0.25; }
         }
         .label {
-          font-size: 10px;
-          font-weight: 600;
-          text-transform: uppercase;
-          letter-spacing: 1.8px;
+          font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.8px;
           color: var(--secondary-text-color, rgba(255,255,255,0.28));
-          font-family: sans-serif;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          pointer-events: none;
+          font-family: sans-serif; white-space: nowrap; overflow: hidden;
+          text-overflow: ellipsis; pointer-events: none;
         }
         .right {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          flex-shrink: 0;
-          pointer-events: none;
+          display: flex; align-items: center; gap: 8px;
+          flex-shrink: 0; pointer-events: none;
         }
         .time {
-          font-size: 13px;
-          font-weight: 700;
-          font-variant-numeric: tabular-nums;
-          font-family: sans-serif;
-          line-height: 1;
-          pointer-events: none;
+          font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
+          font-family: sans-serif; line-height: 1; pointer-events: none;
         }
         .time-total {
-          font-size: 11px;
-          font-weight: 500;
+          font-size: 11px; font-weight: 500;
           color: var(--secondary-text-color, rgba(255,255,255,0.28));
-          font-variant-numeric: tabular-nums;
-          font-family: sans-serif;
-          line-height: 1;
-          pointer-events: none;
+          font-variant-numeric: tabular-nums; font-family: sans-serif;
+          line-height: 1; pointer-events: none;
         }
         .s-cancel {
-          font-size: 9px;
-          color: var(--secondary-text-color, rgba(255,255,255,0.22));
+          font-size: 9px; color: var(--secondary-text-color, rgba(255,255,255,0.22));
           border: 1px solid var(--divider-color, rgba(255,255,255,0.12));
-          border-radius: 6px;
-          padding: 2px 7px;
-          font-family: sans-serif;
-          line-height: 1.6;
-          white-space: nowrap;
-          pointer-events: none;
+          border-radius: 6px; padding: 2px 7px; font-family: sans-serif;
+          line-height: 1.6; white-space: nowrap; pointer-events: none;
         }
         .s-badge {
-          font-size: 9px;
-          border: 1px solid;
-          border-radius: 6px;
-          padding: 2px 7px;
-          font-family: sans-serif;
-          line-height: 1.6;
-          white-space: nowrap;
-          pointer-events: none;
+          font-size: 9px; border: 1px solid; border-radius: 6px; padding: 2px 7px;
+          font-family: sans-serif; line-height: 1.6; white-space: nowrap; pointer-events: none;
         }
         .s-error {
           color: var(--error-color, #f87171) !important;
-          border-color: var(--error-color, #f87171) !important;
-          font-weight: 700;
+          border-color: var(--error-color, #f87171) !important; font-weight: 700;
         }
-        .bar-wrap {
-          width: 100%;
-          overflow: hidden;
-          pointer-events: none;
-        }
-        .bar-wrap.bar-rtl {
-          display: flex;
-          flex-direction: row-reverse;
-        }
-        .bar-fill {
-          height: 100%;
-          width: 0%;
-          transition: width 0.9s linear;
-          pointer-events: none;
-        }
+        .bar-wrap { width: 100%; overflow: hidden; pointer-events: none; }
+        .bar-wrap.bar-rtl { display: flex; flex-direction: row-reverse; }
+        .bar-fill { height: 100%; width: 0%; transition: width 0.9s linear; pointer-events: none; }
         .row-sep {
-          height: 1px;
-          background: var(--divider-color, rgba(255,255,255,0.08));
-          margin: 8px 0;
-          pointer-events: none;
+          height: 1px; background: var(--divider-color, rgba(255,255,255,0.08));
+          margin: 8px 0; pointer-events: none;
         }
       </style>
       <div class="card">${rowsHtml}</div>
@@ -963,7 +766,6 @@ class CompactTimerCard extends HTMLElement {
     if (cardEl) {
       let holdTimer = null;
       let holdFired = false;
-
       const startHold = (entityId) => {
         holdFired = false;
         holdTimer = setTimeout(() => {
@@ -972,26 +774,15 @@ class CompactTimerCard extends HTMLElement {
           navigator.vibrate?.(40);
         }, 500);
       };
+      const cancelHold = () => { if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; } };
 
-      const cancelHold = () => {
-        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
-      };
-
-      cardEl.addEventListener('mousedown', (e) => {
-        const row = e.target.closest('[data-entity]');
-        if (row) startHold(row.dataset.entity);
-      });
-      cardEl.addEventListener('mouseup', cancelHold);
+      cardEl.addEventListener('mousedown',  (e) => { const r = e.target.closest('[data-entity]'); if (r) startHold(r.dataset.entity); });
+      cardEl.addEventListener('mouseup',    cancelHold);
       cardEl.addEventListener('mouseleave', cancelHold);
-
-      cardEl.addEventListener('touchstart', (e) => {
-        const row = e.target.closest('[data-entity]');
-        if (row) startHold(row.dataset.entity);
-      }, { passive: true });
-      cardEl.addEventListener('touchend', cancelHold);
-      cardEl.addEventListener('touchmove', cancelHold, { passive: true });
-      cardEl.addEventListener('touchcancel', cancelHold);
-
+      cardEl.addEventListener('touchstart', (e) => { const r = e.target.closest('[data-entity]'); if (r) startHold(r.dataset.entity); }, { passive: true });
+      cardEl.addEventListener('touchend',   cancelHold);
+      cardEl.addEventListener('touchmove',  cancelHold, { passive: true });
+      cardEl.addEventListener('touchcancel',cancelHold);
       cardEl.addEventListener('click', (e) => {
         if (holdFired) { holdFired = false; return; }
         const row = e.target.closest('[data-entity]');
@@ -1002,25 +793,21 @@ class CompactTimerCard extends HTMLElement {
     this._initialized = true;
   }
 
-  // ── Tick — updates only changing values each second ────────
+  // ── Tick ───────────────────────────────────────────────────
 
   _tick() {
     if (!this._initialized) return;
-
     for (const ec of this._normalizeEntities()) {
       const data = this._getTimerData(ec.entity);
       if (!data?.isActive) continue;
-
-      const eid = ec.entity;
-      const isRTL = this._config.bar_direction === 'rtl';
+      const eid    = ec.entity;
+      const isRTL  = this._config.bar_direction === 'rtl';
       const barWidth = isRTL ? (100 - data.pct) : data.pct;
-
       const timeEl = this.shadowRoot.querySelector(`[data-d="${eid}"]`);
       const barEl  = this.shadowRoot.querySelector(`[data-b="${eid}"]`);
       const totEl  = this.shadowRoot.querySelector(`[data-t="${eid}"]`);
-
       if (timeEl) timeEl.textContent = data.timeStr;
-      if (barEl)  barEl.style.width = `${barWidth}%`;
+      if (barEl)  barEl.style.width  = `${barWidth}%`;
       if (totEl && data.totalSec > 0) totEl.textContent = `/ ${this._formatTime(data.totalSec)}`;
     }
   }
@@ -1036,6 +823,6 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'compact-timer-card',
   name: 'Compact Timer Card',
-  description: 'Sleek timer card with live countdown, gradient bar, notifications, and deadman switch support.',
+  description: 'Sleek timer card with live countdown, gradient bar, warning/critical color zones, and multi-timer stacked mode.',
   preview: true,
 });
