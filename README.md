@@ -17,16 +17,22 @@ Universal Remote Card is great for controlling media devices, but it has no nati
 
 ## Features
 
-- Live per-second countdown computed from `finishes_at`
-- Warning and critical color zones with configurable thresholds
+- Live countdown computed from `finishes_at`, with server↔client clock-skew compensation
+- Warning and critical color zones with configurable thresholds — percentage and/or absolute seconds
 - Optional bar pulse animation when entering warning/critical zone
-- Paused state with dimmed bar and badge
-- Tap and hold actions (cancel, pause/resume, or custom)
+- Paused state with dimmed bar and badge (keeps its zone color)
+- Tap and hold actions (cancel, pause/resume, more-info, or custom)
+- **Extend buttons** — `+10m` / `+30m` chips that call `timer.change` on a running timer
+- **Timestamp sensors** — count down to any `sensor` with `device_class: timestamp` (washer, dryer, voice-assistant timers)
+- **Finished flash** — a brief localized "Done" badge when a timer completes (distinguishes finish from cancel)
+- Optional end-time display (`→ 23:45`)
 - Progress bar: gradient, direction (ltr/rtl), position (top/bottom), height
-- Pulsing icon animation while active
+- Pulsing icon animation while active (honors `prefers-reduced-motion`)
 - `show_when_idle: false` hides the card automatically — no conditional card wrapper needed
-- Stacked mode: display multiple timers in a single card via `entities:`
-- Built-in visual GUI editor
+- Stacked mode: display multiple timers in a single card via `entities:` — every option can be overridden per entity
+- Badge labels auto-localized (en, cs, sk, de, fr, es, it, nl, pl), overridable per card
+- Keyboard accessible (Tab + Enter/Space), sections-layout aware (`getGridOptions`)
+- Built-in visual GUI editor with entity suggestions
 
 ## Timer States
 
@@ -35,9 +41,10 @@ Universal Remote Card is great for controlling media devices, but it has no nati
 | State | Visual |
 |---|---|
 | **active** | Live countdown, full color, pulsing icon, action badge |
-| **paused** | Remaining time (dimmed), ⏸ Paused badge, dimmed bar |
+| **paused** | Remaining time (dimmed), ⏸ Paused badge, dimmed bar — keeps warning/critical color |
 | **idle** | Hidden (if `show_when_idle: false`) or shows full duration |
-| **unknown** | `!` error badge — entity not found |
+| **finished** | ✓ Done badge flashed for 5 s after a natural finish (not after cancel) |
+| **unknown / unavailable / missing** | `!` error badge |
 
 ### Warning and Critical zones
 
@@ -130,24 +137,31 @@ warning_color: "#f6ad55"
 warning_threshold: 30
 critical_color: "#fc8181"
 critical_threshold: 10
+critical_threshold_sec: 60
+extend_buttons: [10, 30]
+show_ends_at: true
 ```
 
 ### Options
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `entity` | string | **required** | Timer entity ID |
+| `entity` | string | **required** | Timer entity ID, or a `sensor` with `device_class: timestamp` |
 | `entities` | list | — | Multiple timers in one card (see Stacked mode below) |
 | `name` | string | friendly_name | Label displayed on the card |
 | `icon` | string | `mdi:timer-outline` | Any MDI icon |
 | `color` | string | `#63b3ed` | Base accent color (hex) — controls bar, icon, and time text |
-| `tap` | string | `cancel` | Tap action: `cancel`, `toggle_pause`, `none` |
-| `hold` | string | `none` | Hold action (~500 ms): `none`, `cancel`, `toggle_pause` |
-| `cancel_label` | string | `Cancel` | Text shown on the cancel badge |
-| `pause_label` | string | `Pause` | Badge text when tap action is `toggle_pause` and timer is active |
-| `resume_label` | string | `Resume` | Badge text when tap action is `toggle_pause` and timer is paused |
-| `paused_label` | string | `Paused` | Badge text when timer is paused and tap action is not `toggle_pause` |
+| `tap` | string | `cancel` | Tap action: `cancel`, `toggle_pause`, `more_info`, `none` |
+| `hold` | string | `none` | Hold action (~500 ms): `none`, `cancel`, `toggle_pause`, `more_info` |
+| `extend_buttons` | list | — | Minutes for `+Nm` chips shown while active, e.g. `[10, 30]` — calls `timer.change` |
+| `cancel_label` | string | localized | Text shown on the cancel badge |
+| `pause_label` | string | localized | Badge text when tap action is `toggle_pause` and timer is active |
+| `resume_label` | string | localized | Badge text when tap action is `toggle_pause` and timer is paused |
+| `paused_label` | string | localized | Badge text when timer is paused and tap action is not `toggle_pause` |
+| `finished_label` | string | localized | Text on the finished badge (e.g. `Done`) |
 | `show_duration` | boolean | `false` | Show total duration next to remaining time (e.g. `1:23 / 30:00`) |
+| `show_ends_at` | boolean | `false` | Show wall-clock end time (`→ 23:45`) while active |
+| `show_finished` | boolean | `true` | Flash a ✓ Done badge for 5 s when a timer finishes naturally |
 | `show_when_idle` | boolean | `false` | Keep card visible when timer is idle |
 | `gradient_bar` | boolean | `true` | Gradient on the progress bar instead of flat color |
 | `pulse_icon` | boolean | `true` | Pulse icon animation while active |
@@ -157,8 +171,12 @@ critical_threshold: 10
 | `bar_position` | string | `bottom` | `bottom` or `top` |
 | `warning_color` | string | — | Color when warning threshold is reached (e.g. `#f6ad55`) |
 | `warning_threshold` | number | `20` | % of time remaining that triggers warning color |
+| `warning_threshold_sec` | number | — | Absolute seconds remaining that trigger warning color (OR-combined with %) |
 | `critical_color` | string | — | Color when critical threshold is reached (e.g. `#fc8181`) |
 | `critical_threshold` | number | `5` | % of time remaining that triggers critical color |
+| `critical_threshold_sec` | number | — | Absolute seconds remaining that trigger critical color (OR-combined with %) |
+| `duration` | string | — | Total duration for timestamp sensors (`"01:00:00"`) — enables the progress bar |
+| `use_ha_card` | boolean | `false` | Render inside `ha-card` so the theme's card background/border applies |
 | `tap_action` | object | — | Advanced tap action object (overrides `tap`) |
 
 ### tap_action object
@@ -174,9 +192,24 @@ critical_threshold: 10
 
 The card includes a built-in GUI editor. In the HA dashboard editor click **+ Add card**, search for **Compact Timer Card**, and configure all options without writing YAML.
 
+### Timestamp sensors
+
+The card also counts down to any `sensor` whose state is a future timestamp (`device_class: timestamp`) — washing machines, dryers, dishwashers, or Alexa/Google voice-assistant timers. Cancel/pause actions don't apply to sensors (tap falls back to more-info). Add `duration` to enable the progress bar, and prefer `*_threshold_sec` since the total duration is otherwise unknown:
+
+```yaml
+type: custom:compact-timer-card
+entity: sensor.washer_finish_time
+name: Washer
+icon: mdi:washing-machine
+duration: "02:30:00"
+critical_color: "#fc8181"
+critical_threshold_sec: 300
+show_ends_at: true
+```
+
 ### Stacked mode
 
-Display multiple timers in a single card. Each timer can override the global color and threshold settings:
+Display multiple timers in a single card. Each timer can override **any** display option — colors, thresholds, bar settings, labels, actions, `extend_buttons`, even `show_when_idle`:
 
 ```yaml
 type: custom:compact-timer-card
