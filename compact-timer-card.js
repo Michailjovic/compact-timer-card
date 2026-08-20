@@ -2,18 +2,20 @@
  * Compact Timer Card
  * A sleek, fully customizable timer card for Home Assistant
  * with live countdown, warning/critical color zones, configurable progress bar,
- * stacked multi-timer mode, timestamp-sensor countdowns, extend buttons,
- * and a built-in visual editor.
+ * stacked multi-timer mode, timestamp-sensor countdowns, preset start buttons,
+ * extend buttons, and a built-in visual editor.
  *
  * https://github.com/Michailjovic/compact-timer-card
- * @version 1.3.0
+ * @version 1.4.0
  */
 
-const CARD_VERSION = '1.3.0';
+const CARD_VERSION = '1.4.0';
 const DEFAULT_COLOR = '#63b3ed';
 const COLOR_RE = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 const FINISHED_MS = 5000;
 const HOLD_MS = 500;
+const SKEW_MIN_MS = 1500;      // below this a difference is just network jitter
+const SKEW_MAX_MS = 21600000;  // 6 h — beyond this the reading is bogus, ignore it
 
 const STRINGS = {
   en: { cancel: 'Cancel', pause: 'Pause', resume: 'Resume', paused: 'Paused', done: 'Done' },
@@ -62,6 +64,87 @@ function formatTime(sec) {
 
 function entityDomain(id) {
   return String(id || '').split('.')[0];
+}
+
+/** Short chip label: 90 -> "90m", 120 -> "2h". */
+function formatPresetChip(min) {
+  return (min >= 60 && min % 60 === 0) ? `${min / 60}h` : `${min}m`;
+}
+
+// ── Config validation ────────────────────────────────────────
+
+/** Everything the card understands, plus keys Home Assistant injects itself. */
+const KNOWN_KEYS = new Set([
+  'type', 'entity', 'entities', 'name', 'icon', 'color',
+  'tap', 'hold', 'tap_action',
+  'cancel_label', 'pause_label', 'resume_label', 'paused_label', 'finished_label',
+  'show_duration', 'show_ends_at', 'show_finished', 'show_when_idle',
+  'gradient_bar', 'pulse_icon', 'pulse_bar',
+  'bar_height', 'bar_direction', 'bar_position',
+  'warning_color', 'warning_threshold', 'warning_threshold_sec',
+  'critical_color', 'critical_threshold', 'critical_threshold_sec',
+  'extend_buttons', 'presets', 'preset_style', 'preset_position', 'preset_unit',
+  'duration', 'use_ha_card',
+  // injected by HA / card-mod / layout tooling — not ours to complain about
+  'view_layout', 'layout_options', 'grid_options', 'visibility', 'card_mod', 'style',
+]);
+
+/** Options removed in an earlier release, with the replacement to point at. */
+const REMOVED_KEYS = {
+  cancel_on_tap: "removed in 1.3.0 — use tap: cancel / tap: none",
+};
+
+/**
+ * Warn (once per setConfig) about options the card will silently ignore.
+ * Catches both typos and leftovers from older config schemas.
+ */
+function warnUnknownKeys(config) {
+  const bad = [];
+  const scan = (obj, prefix) => {
+    Object.keys(obj || {}).forEach((k) => {
+      if (KNOWN_KEYS.has(k)) return;
+      bad.push(REMOVED_KEYS[k] ? `${prefix}${k} (${REMOVED_KEYS[k]})` : `${prefix}${k}`);
+    });
+  };
+  scan(config, '');
+  if (Array.isArray(config.entities)) {
+    config.entities.forEach((e, i) => {
+      if (e && typeof e === 'object') scan(e, `entities[${i}].`);
+    });
+  }
+  if (bad.length) {
+    console.warn(
+      `[compact-timer-card] Ignoring unknown option(s): ${bad.join(', ')}`,
+      '\nSee https://github.com/Michailjovic/compact-timer-card#options');
+  }
+}
+
+// ── Server clock probe ───────────────────────────────────────
+
+/**
+ * One HTTP round trip per page load, shared by every card instance.
+ * The `Date` response header is server time; comparing it against the midpoint
+ * of the round trip gives the client's clock offset to ~1 s. That is enough,
+ * because anything under SKEW_MIN_MS is discarded anyway.
+ */
+let serverSkewPromise = null;
+function probeServerSkew(hass) {
+  if (serverSkewPromise) return serverSkewPromise;
+  serverSkewPromise = (async () => {
+    try {
+      if (typeof hass?.fetchWithAuth !== 'function') return 0;
+      const t0 = Date.now();
+      const res = await hass.fetchWithAuth('/api/', { cache: 'no-store' });
+      const t1 = Date.now();
+      const server = Date.parse(res?.headers?.get('date') || '');
+      if (!Number.isFinite(server)) return 0;
+      const off = server - (t0 + (t1 - t0) / 2);
+      return (Math.abs(off) > SKEW_MIN_MS && Math.abs(off) < SKEW_MAX_MS) ? off : 0;
+    } catch (e) {
+      return 0;
+    }
+  })();
+  return serverSkewPromise;
 }
 
 // ============================================================
@@ -278,7 +361,36 @@ class CompactTimerCardEditor extends HTMLElement {
           <label>Extend buttons — minutes, comma separated (empty = off)</label>
           <input type="text" id="extend_buttons"
                  value="${esc(Array.isArray(c.extend_buttons) ? c.extend_buttons.join(', ') : '')}"
-                 placeholder="10, 30" />
+                 placeholder="10, 30, -10" />
+        </div>
+
+        <hr class="divider" />
+        <h4>Presets</h4>
+        <p class="note">Buttons that start the timer with a fixed duration. A row with presets
+        stays visible even when the timer is idle, otherwise you could never reach them.</p>
+        <div class="field">
+          <label>Preset durations — minutes, comma separated (empty = off)</label>
+          <input type="text" id="presets"
+                 value="${esc(Array.isArray(c.presets) ? c.presets.map((p) => (p && typeof p === 'object' ? p.minutes : p)).join(', ') : '')}"
+                 placeholder="30, 60, 120, 240" />
+        </div>
+        <div class="field">
+          <label>Preset style</label>
+          <select id="preset_style">
+            <option value="buttons" ${(c.preset_style || 'buttons') === 'buttons' ? 'selected' : ''}>Buttons (full-width grid)</option>
+            <option value="chips"   ${c.preset_style === 'chips'                  ? 'selected' : ''}>Chips (inline, compact)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Preset position (buttons style only)</label>
+          <select id="preset_position">
+            <option value="top"    ${(c.preset_position || 'top') === 'top' ? 'selected' : ''}>Above the timer row</option>
+            <option value="bottom" ${c.preset_position === 'bottom'         ? 'selected' : ''}>Below the timer row</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Preset unit label (buttons style only)</label>
+          <input type="text" id="preset_unit" value="${esc(c.preset_unit ?? '')}" placeholder="min" />
         </div>
 
         <hr class="divider" />
@@ -317,6 +429,7 @@ class CompactTimerCardEditor extends HTMLElement {
       'warning_color', 'critical_color',
       'warning_threshold_sec', 'critical_threshold_sec',
       'extend_buttons', 'tap', 'hold',
+      'presets', 'preset_style', 'preset_position', 'preset_unit',
       'show_when_idle', 'show_duration', 'show_ends_at', 'show_finished',
       'gradient_bar', 'pulse_icon', 'pulse_bar', 'use_ha_card',
       'warning_enabled', 'critical_enabled',
@@ -373,11 +486,26 @@ class CompactTimerCardEditor extends HTMLElement {
     setOrDelete('paused_label',   get('paused_label').value);
     setOrDelete('finished_label', get('finished_label').value);
 
-    const extendRaw = get('extend_buttons').value;
-    const extend = extendRaw.split(',').map((s) => parseInt(s.trim(), 10))
-      .filter((n) => Number.isFinite(n) && n > 0);
+    const extend = get('extend_buttons').value.split(',')
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => Number.isFinite(n) && n !== 0);
     if (extend.length > 0) newConfig.extend_buttons = extend;
     else delete newConfig.extend_buttons;
+
+    const presets = get('presets').value.split(',')
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (presets.length > 0) {
+      newConfig.presets = presets;
+      newConfig.preset_style = get('preset_style').value;
+      newConfig.preset_position = get('preset_position').value;
+      setOrDelete('preset_unit', get('preset_unit').value);
+    } else {
+      delete newConfig.presets;
+      delete newConfig.preset_style;
+      delete newConfig.preset_position;
+      delete newConfig.preset_unit;
+    }
 
     if (get('warning_enabled').checked) {
       newConfig.warning_color     = get('warning_color').value;
@@ -432,6 +560,7 @@ class CompactTimerCard extends HTMLElement {
     this._structKey     = null;
     this._rowRefs       = [];
     this._skew          = 0;          // serverTime - clientTime (ms)
+    this._skewFromState = false;      // a live state update beats the HTTP probe
     this._lastRemaining = {};         // entityId -> last seen remaining (s)
     this._finished      = {};         // entityId -> finished-badge expiry (ms)
     this._holdTimer     = null;
@@ -448,16 +577,25 @@ class CompactTimerCard extends HTMLElement {
     return document.createElement('compact-timer-card-editor');
   }
 
-  static getStubConfig() {
+  /**
+   * Pick a real timer from the user's instance so the card-picker preview shows
+   * a working card instead of the "!" error badge for a non-existent entity.
+   */
+  static getStubConfig(hass, entities, entitiesFallback) {
+    const isTimer = (id) => String(id).startsWith('timer.');
+    const entity =
+      (entities || []).find(isTimer) ||
+      (entitiesFallback || []).find(isTimer) ||
+      (hass && hass.states ? Object.keys(hass.states).find(isTimer) : null) ||
+      'timer.example';
     return {
-      entity: 'timer.example',
-      name: 'My Timer',
+      entity,
       icon: 'mdi:timer-outline',
       color: DEFAULT_COLOR,
       tap: 'cancel',
       hold: 'none',
       show_duration: false,
-      show_when_idle: false,
+      show_when_idle: true,   // the preview would otherwise be an empty card
       gradient_bar: true,
       pulse_icon: true,
       pulse_bar: false,
@@ -471,6 +609,7 @@ class CompactTimerCard extends HTMLElement {
     const hasEntity   = config.entity;
     const hasEntities = Array.isArray(config.entities) && config.entities.length > 0;
     if (!hasEntity && !hasEntities) throw new Error('entity or entities is required');
+    warnUnknownKeys(config);
 
     this._config = {
       icon: 'mdi:timer-outline',
@@ -487,6 +626,9 @@ class CompactTimerCard extends HTMLElement {
       bar_height: 3,
       bar_direction: 'ltr',
       bar_position: 'bottom',
+      preset_style: 'buttons',
+      preset_position: 'top',
+      preset_unit: 'min',
       use_ha_card: false,
       tap_action: null,
       ...config,
@@ -503,6 +645,17 @@ class CompactTimerCard extends HTMLElement {
     const old = this._hass;
     this._hass = hass;
 
+    if (!old) {
+      // A timer that was already running when the card loaded never produces a
+      // state transition to calibrate against, so ask the server for its clock.
+      probeServerSkew(hass).then((off) => {
+        if (off && !this._skewFromState && this._hass) {
+          this._skew = off;
+          this._refresh();
+        }
+      });
+    }
+
     if (!this._initialized || !old) {
       this._refresh();
       return;
@@ -518,10 +671,15 @@ class CompactTimerCard extends HTMLElement {
       const ns = hass.states[ec.entity];
       if (!os || !ns || os === ns) continue;
 
-      // Live transition into "active": calibrate server-client clock skew.
+      // Any freshly arrived state carries a server timestamp of ~now, which is
+      // the most accurate clock-skew sample available to the frontend.
+      const off = Date.parse(ns.last_updated) - Date.now();
+      if (Number.isFinite(off) && Math.abs(off) < SKEW_MAX_MS) {
+        this._skew = Math.abs(off) > SKEW_MIN_MS ? off : 0;
+        this._skewFromState = true;
+      }
+
       if (ns.state === 'active' && os.state !== 'active') {
-        const off = Date.parse(ns.last_updated) - Date.now();
-        this._skew = (Math.abs(off) > 1500 && Math.abs(off) < 21600000) ? off : 0;
         delete this._finished[ec.entity];
       }
 
@@ -545,6 +703,7 @@ class CompactTimerCard extends HTMLElement {
     document.removeEventListener('visibilitychange', this._onVisibility);
     this._stopInterval();
     clearTimeout(this._holdTimer);
+    clearTimeout(this._holdReset);
   }
 
   // ── Refresh / structure ────────────────────────────────────
@@ -571,8 +730,61 @@ class CompactTimerCard extends HTMLElement {
 
   _isVisible(ec, data) {
     if (data.isError) return true;
+    // Presets are the way to *start* the timer, so hiding the row while idle
+    // would put them permanently out of reach. They win over show_when_idle.
+    if (this._presetList(ec).length > 0) return true;
     if (this._isFinished(ec.entity) && ec.show_finished !== false) return true;
     return ec.show_when_idle ? true : !data.isIdle;
+  }
+
+  // ── Presets ────────────────────────────────────────────────
+
+  /** Normalize `presets:` to [{min, label}] — accepts numbers or {minutes, label}. */
+  _presetList(ec) {
+    if (entityDomain(ec.entity) !== 'timer') return [];
+    if (!Array.isArray(ec.presets)) return [];
+    return ec.presets.map((p) => {
+      const isObj = p !== null && typeof p === 'object';
+      const min = Number(isObj ? (p.minutes ?? p.min) : p);
+      if (!Number.isFinite(min) || min <= 0) return null;
+      return { min, label: isObj && p.label ? String(p.label) : null };
+    }).filter(Boolean);
+  }
+
+  _presetsHtml(ec, style) {
+    const list = this._presetList(ec);
+    if (!list.length) return '';
+    const entityId = ec.entity;
+    const btn = (p, cls, inner) =>
+      `<button class="${cls}" type="button" data-preset="${p.min * 60}"
+               data-target="${esc(entityId)}"
+               aria-label="${esc(p.label || `${p.min} min`)}">${inner}</button>`;
+
+    if (style === 'chips') {
+      return list.map((p) =>
+        btn(p, 'chip preset-chip', esc(p.label || formatPresetChip(p.min)))).join('');
+    }
+    const unit = ec.preset_unit ?? 'min';
+    const cells = list.map((p) => btn(p, 'preset-btn',
+      `<span class="preset-num">${esc(p.label || p.min)}</span>` +
+      (p.label || !unit ? '' : `<span class="preset-unit">${esc(unit)}</span>`))).join('');
+    const pos = ec.preset_position === 'bottom' ? 'bottom' : 'top';
+    return `<div class="preset-grid ${pos}"
+                 style="grid-template-columns:repeat(${list.length},1fr);">${cells}</div>`;
+  }
+
+  /** Start (or restart) a timer with a preset duration. */
+  _startPreset(entityId, seconds) {
+    if (!this._hass || !entityId || !Number.isFinite(seconds) || seconds <= 0) return;
+    if (entityDomain(entityId) !== 'timer') return;
+    this._hass.callService('timer', 'start', { entity_id: entityId, duration: seconds });
+    this._haptic();
+  }
+
+  _haptic() {
+    this.dispatchEvent(new CustomEvent('haptic', {
+      bubbles: true, composed: true, detail: 'light',
+    }));
   }
 
   // ── Interval ───────────────────────────────────────────────
@@ -664,8 +876,9 @@ class CompactTimerCard extends HTMLElement {
     if (!ref || !this._hass) return;
     const entityId = ref.cfg.entity;
 
-    if (this._config.tap_action) {
-      const action = this._config.tap_action;
+    // Per-entity tap_action wins; _normalizeEntities inherits the card-level one.
+    if (ref.cfg.tap_action) {
+      const action = ref.cfg.tap_action;
       if (action.action === 'call-service' || action.action === 'perform-action') {
         const [domain, service] = (action.service || action.perform_action || '').split('.');
         if (domain && service) {
@@ -691,10 +904,12 @@ class CompactTimerCard extends HTMLElement {
   }
 
   _extendTimer(entityId, seconds) {
-    if (!this._hass || !entityId || !Number.isFinite(seconds)) return;
+    if (!this._hass || !entityId || !Number.isFinite(seconds) || seconds === 0) return;
     const stateObj = this._hass.states[entityId];
-    if (!stateObj || stateObj.state !== 'active') return;
+    // timer.change accepts paused timers too, and negative values shorten them.
+    if (!stateObj || (stateObj.state !== 'active' && stateObj.state !== 'paused')) return;
     this._hass.callService('timer', 'change', { entity_id: entityId, duration: seconds });
+    this._haptic();
   }
 
   // ── Entity normalization ────────────────────────────────────
@@ -709,7 +924,8 @@ class CompactTimerCard extends HTMLElement {
       'show_duration', 'show_when_idle', 'show_ends_at', 'show_finished',
       'gradient_bar', 'pulse_icon', 'pulse_bar',
       'bar_height', 'bar_direction', 'bar_position',
-      'tap', 'hold', 'extend_buttons', 'duration',
+      'tap', 'hold', 'tap_action', 'extend_buttons', 'duration',
+      'presets', 'preset_style', 'preset_position', 'preset_unit',
     ].forEach((k) => {
       if (this._config[k] !== undefined) globals[k] = this._config[k];
     });
@@ -816,11 +1032,25 @@ class CompactTimerCard extends HTMLElement {
     if (!data || (!data.isActive && !data.isPaused)) return 'normal';
     const rem = data.remainingSec;
     const pctRem = data.totalSec > 0 ? (rem / data.totalSec) * 100 : null;
+
+    // Thresholds are OR-combined, so whichever fires first wins. That makes the
+    // percentage default actively harmful once an absolute threshold is set:
+    // "5 %" of a 4 h timer is 12 minutes and would always beat "60 s". An
+    // explicit *_threshold_sec therefore suppresses the implicit percentage —
+    // set the percentage explicitly to get both.
+    const pctThreshold = (explicit, secT, fallback) =>
+      explicit != null ? explicit : (secT != null ? null : fallback);
+
     const hit = (color, pctT, secT) => !!color && (
-      (pctRem != null && pctRem <= pctT) ||
+      (pctRem != null && pctT != null && pctRem <= pctT) ||
       (secT != null && rem <= secT));
-    if (hit(ec.critical_color, ec.critical_threshold ?? 5, ec.critical_threshold_sec)) return 'critical';
-    if (hit(ec.warning_color, ec.warning_threshold ?? 20, ec.warning_threshold_sec)) return 'warning';
+
+    if (hit(ec.critical_color,
+            pctThreshold(ec.critical_threshold, ec.critical_threshold_sec, 5),
+            ec.critical_threshold_sec)) return 'critical';
+    if (hit(ec.warning_color,
+            pctThreshold(ec.warning_threshold, ec.warning_threshold_sec, 20),
+            ec.warning_threshold_sec)) return 'warning';
     return 'normal';
   }
 
@@ -847,10 +1077,20 @@ class CompactTimerCard extends HTMLElement {
 
   // ── Build ──────────────────────────────────────────────────
 
+  _rowName(ec) {
+    const stateObj = this._hass && this._hass.states[ec.entity];
+    return ec.name || stateObj?.attributes.friendly_name || ec.entity;
+  }
+
+  /** Accessible label — includes the countdown so a screen reader announces it. */
+  _rowAria(ec, data) {
+    const name = this._rowName(ec);
+    return (data.isActive || data.isPaused) ? `${name}, ${data.timeStr}` : name;
+  }
+
   _rowHtml(ec, data, index) {
     const entityId  = ec.entity;
-    const stateObj  = this._hass && this._hass.states[entityId];
-    const name      = ec.name || stateObj?.attributes.friendly_name || entityId;
+    const name      = this._rowName(ec);
     const isTimer   = entityDomain(entityId) === 'timer';
     const finished  = this._isFinished(entityId) && !data.isActive && ec.show_finished !== false;
 
@@ -905,17 +1145,28 @@ class CompactTimerCard extends HTMLElement {
     } else if (isActive && isTimer) {
       if (tapAction === 'toggle_pause') {
         statusBadge = `<span class="s-cancel">&#x23F8; ${esc(pauseLabel)}</span>`;
-      } else if (tapAction === 'cancel' && !this._config.tap_action) {
+      } else if (tapAction === 'cancel' && !ec.tap_action) {
         statusBadge = `<span class="s-cancel">${esc(cancelLabel)}</span>`;
       }
     }
 
     let chipsHtml = '';
-    if (isActive && isTimer && Array.isArray(ec.extend_buttons) && ec.extend_buttons.length > 0) {
-      chipsHtml = ec.extend_buttons.map((m) =>
-        `<button class="chip" data-extend="${Number(m) * 60}" data-target="${esc(entityId)}"
-                 aria-label="+${Number(m)} min">+${Number(m)}m</button>`).join('');
+    if ((isActive || isPaused) && isTimer
+        && Array.isArray(ec.extend_buttons) && ec.extend_buttons.length > 0) {
+      chipsHtml = ec.extend_buttons
+        .map((m) => Number(m))
+        .filter((m) => Number.isFinite(m) && m !== 0)
+        .map((m) => {
+          const label = `${m > 0 ? '+' : '−'}${Math.abs(m)}m`;
+          return `<button class="chip" type="button" data-extend="${m * 60}"
+                          data-target="${esc(entityId)}"
+                          aria-label="${m > 0 ? 'plus' : 'minus'} ${Math.abs(m)} min">${label}</button>`;
+        }).join('');
     }
+
+    const presetStyle  = ec.preset_style === 'chips' ? 'chips' : 'buttons';
+    const presetChips  = presetStyle === 'chips'   ? this._presetsHtml(ec, 'chips')   : '';
+    const presetBlock  = presetStyle === 'buttons' ? this._presetsHtml(ec, 'buttons') : '';
 
     const totalHtml = totalStr ? `<span class="time-total" data-role="total">/ ${totalStr}</span>` : '';
     const endsHtml  = endsStr ? `<span class="time-total" data-role="ends">${esc(endsStr)}</span>` : '';
@@ -944,15 +1195,29 @@ class CompactTimerCard extends HTMLElement {
                 style="color:${lit ? 'var(--ctc)' : 'color-mix(in srgb, var(--ctc) 45%, transparent)'};">${esc(timeStr)}</span>
           ${totalHtml}
           ${endsHtml}
+          ${presetChips}
           ${chipsHtml}
           ${statusBadge}
         </div>
       </div>`;
 
+    // What actually happens on press decides what the row is allowed to look
+    // like. A row with tap: none must not advertise itself as a button.
+    const hasTap  = !!ec.tap_action || tapAction !== 'none';
+    const hasHold = this._effectiveHold(ec) !== 'none';
+    const rowCls  = `timer-row${hasTap || hasHold ? ' pressable' : ''}${hasTap ? ' focusable' : ''}`;
+    const a11y    = hasTap
+      ? ` role="button" tabindex="0" aria-label="${esc(this._rowAria(ec, data))}"`
+      : '';
+
     const content = isBarTop ? `${barHtml}${rowHtml}` : `${rowHtml}${barHtml}`;
-    return `<div class="timer-row" data-entity="${esc(entityId)}" data-i="${index}"
-                 role="button" tabindex="0" aria-label="${esc(name)}"
-                 style="--ctc:${color};--ctc-base:${base};">${content}</div>`;
+    const row = `<div class="${rowCls}" data-entity="${esc(entityId)}" data-i="${index}"${a11y}>${content}</div>`;
+
+    // Presets live outside [data-i] on purpose: that keeps them out of the row's
+    // tap/hold/keyboard target instead of relying on event-handler guards.
+    const top    = presetBlock && ec.preset_position !== 'bottom' ? presetBlock : '';
+    const bottom = presetBlock && ec.preset_position === 'bottom' ? presetBlock : '';
+    return `<div class="row-group" style="--ctc:${color};--ctc-base:${base};">${top}${row}${bottom}</div>`;
   }
 
   _build() {
@@ -998,11 +1263,12 @@ class CompactTimerCard extends HTMLElement {
           border-radius: 14px;
         }
         .timer-row {
-          cursor: pointer; pointer-events: auto; border-radius: 6px; outline: none;
+          pointer-events: auto; border-radius: 6px; outline: none;
           transition: opacity 0.1s ease, transform 0.1s ease;
         }
-        .timer-row:active { opacity: 0.75; transform: scale(0.99); }
-        .timer-row:focus-visible {
+        .timer-row.pressable { cursor: pointer; }
+        .timer-row.pressable:active { opacity: 0.75; transform: scale(0.99); }
+        .timer-row.focusable:focus-visible {
           box-shadow: 0 0 0 2px color-mix(in srgb, var(--ctc) 60%, transparent);
         }
         .info-row {
@@ -1081,6 +1347,40 @@ class CompactTimerCard extends HTMLElement {
           border-radius: 6px; padding: 2px 7px; line-height: 1.6; white-space: nowrap;
         }
         .chip:active { opacity: 0.6; }
+        .chip:focus-visible {
+          outline: none;
+          box-shadow: 0 0 0 2px color-mix(in srgb, var(--ctc) 60%, transparent);
+        }
+        .preset-grid {
+          display: grid; gap: 8px; pointer-events: auto;
+        }
+        .preset-grid.top    { margin: 0 0 10px 0; }
+        .preset-grid.bottom { margin: 10px 0 0 0; }
+        .preset-btn {
+          display: flex; flex-direction: column; align-items: center; justify-content: center;
+          gap: 4px; padding: 12px 4px; cursor: pointer; font: inherit; outline: none;
+          background: color-mix(in srgb, var(--ctc-base) 6%, transparent);
+          border: 1px solid color-mix(in srgb, var(--ctc-base) 20%, transparent);
+          border-radius: 14px;
+          transition: background 0.12s ease, transform 0.1s ease, opacity 0.1s ease;
+        }
+        .preset-btn:hover { background: color-mix(in srgb, var(--ctc-base) 12%, transparent); }
+        .preset-btn:active { transform: scale(0.97); opacity: 0.7; }
+        .preset-btn:focus-visible {
+          box-shadow: 0 0 0 2px color-mix(in srgb, var(--ctc-base) 60%, transparent);
+        }
+        .preset-num {
+          font-size: 16px; font-weight: 800; line-height: 1; color: var(--ctc-base);
+          font-variant-numeric: tabular-nums;
+          font-family: var(--ha-font-family-body, var(--primary-font-family, sans-serif));
+        }
+        .preset-unit {
+          font-size: 9px; font-weight: 600; line-height: 1;
+          text-transform: uppercase; letter-spacing: 1.5px;
+          color: var(--secondary-text-color, rgba(127,127,127,0.6));
+          font-family: var(--ha-font-family-body, var(--primary-font-family, sans-serif));
+        }
+        .preset-chip { color: var(--ctc-base); }
         .bar-wrap { width: 100%; overflow: hidden; pointer-events: none; }
         .bar-wrap.bar-rtl { display: flex; flex-direction: row-reverse; }
         .bar-fill { height: 100%; width: 0%; transition: width 0.4s linear; pointer-events: none; }
@@ -1095,11 +1395,15 @@ class CompactTimerCard extends HTMLElement {
 
     // Cache element references per row — no per-tick querySelector calls.
     this._rowRefs = [];
-    this.shadowRoot.querySelectorAll('.timer-row').forEach((row, i) => {
+    this.shadowRoot.querySelectorAll('.row-group').forEach((group, i) => {
       const { cfg, data } = visible[i];
+      const row = group.querySelector('.timer-row');
       this._rowRefs.push({
         cfg,
+        group,
         row,
+        hasAria: row.hasAttribute('aria-label'),
+        lastAria: row.getAttribute('aria-label'),
         els: {
           time:  row.querySelector('[data-role="time"]'),
           bar:   row.querySelector('[data-role="bar"]'),
@@ -1139,7 +1443,7 @@ class CompactTimerCard extends HTMLElement {
     if (!cardEl) return;
 
     const startHold = (target) => {
-      if (target.closest('[data-extend]')) return;
+      if (target.closest('[data-extend], [data-preset]')) return;
       const row = target.closest('[data-i]');
       if (!row) return;
       const index = Number(row.dataset.i);
@@ -1169,6 +1473,11 @@ class CompactTimerCard extends HTMLElement {
     cardEl.addEventListener('touchcancel', cancelHold);
 
     cardEl.addEventListener('click', (e) => {
+      const preset = e.target.closest('[data-preset]');
+      if (preset) {
+        this._startPreset(preset.dataset.target, Number(preset.dataset.preset));
+        return;
+      }
       const chip = e.target.closest('[data-extend]');
       if (chip) {
         this._extendTimer(chip.dataset.target, Number(chip.dataset.extend));
@@ -1181,7 +1490,11 @@ class CompactTimerCard extends HTMLElement {
 
     cardEl.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
-      const row = e.target.closest && e.target.closest('[data-i]');
+      if (!e.target.closest) return;
+      // Chips and presets are real <button>s — let the browser activate them
+      // natively instead of hijacking the key for the row's tap action.
+      if (e.target.closest('[data-extend], [data-preset]')) return;
+      const row = e.target.closest('[data-i]');
       if (!row) return;
       e.preventDefault();
       this._handleTap(Number(row.dataset.i));
@@ -1202,7 +1515,7 @@ class CompactTimerCard extends HTMLElement {
       const zone = finished ? 'normal' : this._getThresholdZone(data, ref.cfg);
       if (zone !== ref.lastZone) {
         ref.lastZone = zone;
-        ref.row.style.setProperty('--ctc', this._zoneColor(zone, ref.cfg));
+        ref.group.style.setProperty('--ctc', this._zoneColor(zone, ref.cfg));
         if (ref.els.bar) {
           const pulse = ref.cfg.pulse_bar === true && data.isActive && !data.isPaused
             && (zone === 'warning' || zone === 'critical');
@@ -1251,6 +1564,13 @@ class CompactTimerCard extends HTMLElement {
       if (ref.els.time && data.timeStr !== ref.lastTime) {
         ref.els.time.textContent = data.timeStr;
         ref.lastTime = data.timeStr;
+        if (ref.hasAria) {
+          const aria = this._rowAria(ec, data);
+          if (aria !== ref.lastAria) {
+            ref.row.setAttribute('aria-label', aria);
+            ref.lastAria = aria;
+          }
+        }
       }
       const isRTL = ec.bar_direction === 'rtl';
       const width = (isRTL ? 100 - data.pct : data.pct).toFixed(1) + '%';

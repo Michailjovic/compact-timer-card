@@ -3,6 +3,31 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.0] — 2026-08-20
+
+### Added
+
+- **Preset buttons** — `presets: [30, 60, 120, 240]` renders buttons that call `timer.start` with a fixed duration, so a timer can be *started* from the card instead of only cancelled. Two looks via `preset_style`: `buttons` (default, full-width grid with a unit caption) or `chips` (inline, next to the countdown). `preset_position: top | bottom` places the grid relative to the timer row, `preset_unit` overrides the `MIN` caption, and entries may be objects — `{ minutes: 90, label: "1½h" }`. Tapping a preset on a running timer restarts it with the new duration. This replaces the external `button-card` stack the README previously recommended for the job.
+  - A row that has presets stays visible even with `show_when_idle: false` — hiding it would put the only way to start the timer permanently out of reach.
+- **Unknown-option warning** — `setConfig()` now logs every option the card does not understand, for the card itself and for each entry in `entities:`. Options removed in earlier releases name their replacement (e.g. `cancel_on_tap` → `tap:`). Keys injected by HA, card-mod, and layout tooling are not reported.
+- **Haptic feedback** on preset and extend buttons (HA `haptic` event).
+
+### Changed
+
+- **An explicit `*_threshold_sec` now suppresses the implicit percentage threshold.** The two are OR-combined, so whichever fires first wins — which made the *default* percentage silently defeat the absolute one it was added for: `critical_threshold` defaults to 5 %, and 5 % of a 4-hour timer is 12 minutes, so `critical_threshold_sec: 60` never got a chance. Setting only `critical_threshold_sec` now means exactly that; set the percentage explicitly alongside it to get both. Configs that use percentages only are unaffected.
+- **`extend_buttons` accepts negative values and works on paused timers** — `[-10, 10, 30]` renders `−10m / +10m / +30m`, and `timer.change` is now called for `paused` timers as well, not only `active` ones.
+- **Server clock skew is calibrated for already-running timers.** Previously the offset was only measured on a live transition into `active`, so a timer that was already running when the page loaded — the common case after a reload — always assumed a correct client clock. The card now samples the offset from any incoming state update, and additionally probes the server's `Date` response header once per page load (shared across all card instances, silently skipped when unavailable).
+- `getStubConfig()` picks a real timer from the instance, so the card-picker preview shows a working card instead of the `!` badge for the non-existent `timer.example`.
+
+### Fixed
+
+- **Per-entity `tap_action` was silently ignored.** `_handleTap()` read the card-level `tap_action` only, so in stacked mode one entity's custom action was applied to every row — the same class of bug fixed for `tap`/`hold` in 1.3.0, which this option was missed by. `tap_action` is now inherited from card level and overridable per entity, and the `Cancel` badge is suppressed per row rather than card-wide.
+- **A row with `tap: none` no longer pretends to be a button.** It rendered with `role="button"`, `tabindex="0"`, a pointer cursor, a press animation, and a focus ring — all for an action that does nothing — and keyboard activation reached a no-op handler. `role`/`tabindex`/focus ring now appear only when a tap action exists; the press affordance only when tap *or* hold does something.
+- **Enter/Space on an extend chip triggered the row's tap action** (typically cancelling the timer) instead of extending it, because the row's keydown handler matched the chip via `closest()` and called `preventDefault()`, suppressing the button's native activation. Chips and presets now sit outside the row's `[data-i]` tap target entirely, so pointer, hold, and keyboard handling skip them structurally rather than by guard.
+- `aria-label` on a timer row now carries the remaining time and is updated as it counts down; it was previously the name alone.
+- Extend and preset buttons have a visible `:focus-visible` ring.
+- `_holdReset` is cleared in `disconnectedCallback()` alongside `_holdTimer`.
+
 ## [1.3.0] — 2026-06-11
 
 ### Added
